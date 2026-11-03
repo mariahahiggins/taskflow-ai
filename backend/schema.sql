@@ -2,7 +2,8 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS employees (
     employee_id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL
+        CHECK (LENGTH(TRIM(name)) > 0),
     available_hours REAL NOT NULL
         CHECK (available_hours >= 0),
     experience_level TEXT NOT NULL
@@ -11,7 +12,8 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE TABLE IF NOT EXISTS tasks (
     task_id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
+    title TEXT NOT NULL
+        CHECK (LENGTH(TRIM(title)) > 0),
     estimated_hours REAL NOT NULL
         CHECK (estimated_hours > 0),
     deadline TEXT NOT NULL
