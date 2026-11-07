@@ -116,7 +116,9 @@ def get_tasks_by_employee(employee_id):
     return tasks
 
 
-def add_task(title, estimated_hours, deadline, priority, difficulty, employee_id=None):
+def add_task(
+    title, estimated_hours, deadline, priority, difficulty, employee_id=None, *, status="Active"
+):
     validate_deadline(deadline)
 
     with get_connection() as connection:
@@ -124,11 +126,11 @@ def add_task(title, estimated_hours, deadline, priority, difficulty, employee_id
             """
             INSERT INTO tasks (
                 title, estimated_hours, deadline,
-                priority, difficulty, employee_id
+                priority, difficulty, employee_id, status
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, estimated_hours, deadline, priority, difficulty, employee_id)
+            (title, estimated_hours, deadline, priority, difficulty, employee_id, status)
         )
         task_id = cursor.lastrowid
 

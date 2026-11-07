@@ -6,12 +6,12 @@
 
 ## 1. Overview
 
-This document outlines the proposed API endpoints for TaskFlow AI.
+This document describes the employee, task, and workload endpoints for TaskFlow AI.
 
 - **Streamlit** sends requests to FastAPI to retrieve or update information.
 - **FastAPI (`main.py`)** receives requests, calls the appropriate Python functions, and returns results.
 
-## 2. Proposed Endpoints
+## 2. Endpoints
 
 ### Employees
 
@@ -69,39 +69,41 @@ When adding an employee, Streamlit sends the name, available hours, and experien
 
 | Method | Endpoint | Purpose | Python Functions |
 |---|---|---|---|
-| GET | `/employees/{id}/workload` | Get one employee's workload | `get_employee()`, `get_tasks_by_employee()`, `get_workload_summary()` |
-| GET | `/workloads` | Get all employee workloads | `get_employees()`, `get_tasks()`, `get_workload_summary()` |
+| GET | `/employees/{id}/workload` | Get one employee's workload | `get_employee_workload_summary()` |
+| GET | `/workloads` | Get team totals, employee workloads, fairness, and deadlines | `get_team_workload_summary()` |
 
-**Example workload response:**
+#### Individual workload response
 
-```json
-{
-  "employee_id": 1,
-  "name": "Sarah",
-  "weekly_available_hours": 40,
-  "outstanding_hours": 60,
-  "deadline_groups": {
-    "within_1_week": 10,
-    "within_2_weeks": 20,
-    "after_2_weeks": 30
-  },
-  "deadline_conflicts": [
-    {
-      "deadline": "2026-10-28",
-      "hours_due": 20,
-      "available_hours": 16,
-      "shortfall": 4
-    }
-  ]
-}
-```
+| Fields | Meaning |
+| --- | --- |
+| `employee_id`, `name`, `experience_level`, `available_hours` | Employee details and weekly available hours |
+| `outstanding_hours`, `active_task_count` | Estimated hours and count of active assigned tasks |
+| `overdue_task_count`, `within_1_week_count`, `week_2_count`, `after_2_weeks_count` | Counts in separate deadline groups |
+| `one_week_utilization`, `two_week_utilization` | Percent of available hours needed by each horizon. Returns `null` when capacity is zero. |
+| `deadline_conflicts` | Overdue tasks and capacity shortfalls. Each entry includes `deadline`, `required_hours`, `available_hours`, `shortfall_hours`, and `type` (`overdue` or `capacity`). |
 
-**Workload calculations:**
-- Outstanding hours = total estimated hours of active assigned tasks. Hours are not reduced as work progresses unless the task estimate is manually updated.
-- Deadline groups show hours due within 1 week, during the second week, and after 2 weeks. These are separate groups, not cumulative totals.
-- Deadline conflicts compare cumulative task hours due by each actual deadline against estimated available working hours.
-- Available hours are estimated using the employee's weekly availability and a five-day workweek.
-- These are approximate capacity checks, not detailed schedules.
+Returns HTTP 404 if the employee ID does not exist.
+
+#### Team workload response
+
+| Fields | Meaning |
+| --- | --- |
+| `total_employees`, `active_tasks`, `unassigned_tasks` | Number of employees, assigned active tasks, and unassigned active tasks |
+| `outstanding_hours`, `overdue_tasks` | Assigned active hours and assigned overdue task count |
+| `employees_with_conflicts`, `total_deadline_conflicts` | Employees with a conflict and total number of conflict entries |
+| `employees` | List of individual workload summaries |
+| `fairness` | One- and two-week utilization spreads, plus per-employee counts and hours for active high-priority and Hard tasks and their spreads |
+| `upcoming_deadlines` | Active task records sorted by deadline, including overdue and unassigned tasks |
+
+The `high_priority_tasks` and `difficult_tasks` fairness fields map employee IDs
+to `count` and `hours`. JSON object keys are strings. A spread is `null` when
+there are fewer than two eligible employees.
+
+The API uses the server's local date. Deadline groups separate overdue work,
+tasks due within seven days, tasks due from eight through fourteen days, and
+later tasks. Capacity includes weekdays from today through the deadline or
+horizon date, with weekly availability spread across five working days.
+Utilization and deadline conflict checks include unfinished overdue work.
 
 ## 3. Future AI Endpoints
 
