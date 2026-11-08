@@ -7,14 +7,14 @@ from google import genai
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise ValueError("GEMINI_API_KEY is missing from the .env file.")
-
-client = genai.Client(api_key=api_key)
-
 def generate_task_recommendations(task_information):
+
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is missing from the .env file.")
+
+    client = genai.Client(api_key=api_key
 
     prompt = f"""
 You are helping a manager assign tasks to employees.
