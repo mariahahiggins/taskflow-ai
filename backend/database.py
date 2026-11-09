@@ -116,7 +116,6 @@ def get_tasks_by_employee(employee_id):
     return tasks
 
 
-):
 def add_task(title, estimated_hours, deadline, priority, difficulty, employee_id=None):
     validate_deadline(deadline)
 
@@ -125,7 +124,6 @@ def add_task(title, estimated_hours, deadline, priority, difficulty, employee_id
             """
             INSERT INTO tasks (
                 title, estimated_hours, deadline,
-                priority, difficulty, employee_id, status
                 priority, difficulty, employee_id
             )
             VALUES (?, ?, ?, ?, ?, ?)
