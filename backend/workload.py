@@ -23,15 +23,18 @@ def calculate_available_hours(weekly_hours, start_date, end_date):
     if end_date < start_date:
         return 0.0
 
-    calendar_days = (end_date - start_date).days + 1
-    full_weeks, remaining_days = divmod(calendar_days, 7)
-    first_weekday = start_date.weekday()
-    remaining_workdays = sum(
-        (first_weekday + offset) % 7 < 5
-        for offset in range(remaining_days)
-    )
-    working_days = full_weeks * 5 + remaining_workdays
-    return working_days * (weekly_hours / 5)
+    daily_hours = weekly_hours / 5
+    working_days = 0
+
+    current_date = start_date
+
+    while current_date <= end_date:
+        if current_date.weekday() < 5:
+            working_days += 1
+
+        current_date += timedelta(days=1)
+
+    return working_days * daily_hours
 
 """
 Group active tasks by deadline relative to today.

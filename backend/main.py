@@ -13,9 +13,11 @@ from backend.models import (
     EmployeeCreate,
     EmployeeResponse,
     EmployeeUpdate,
+    EmployeeWorkloadResponse,
     TaskCreate,
     TaskResponse,
     TaskUpdate,
+    TeamWorkloadResponse,
 )
 
 app = FastAPI(
@@ -119,9 +121,9 @@ def get_task(id: Annotated[int, Path(gt=0)]):
     tags=["Tasks"],
 )
 def create_task(task: TaskCreate):
-    values = task.model_dump(mode="json")
+    values = task.model_dump(mode="json", exclude={"status"})
     task_id = database.add_task(**values)
-    return {"task_id": task_id, **values}
+    return {"task_id": task_id, "status": task.status, **values}
 
 
 @data_routes.put("/tasks/{id}", response_model=TaskResponse, tags=["Tasks"])
@@ -133,7 +135,11 @@ def update_task(id: Annotated[int, Path(gt=0)], task: TaskUpdate):
     return {"task_id": id, **values}
 
 
-@data_routes.get("/employees/{id}/workload", tags=["Workloads"])
+@data_routes.get(
+    "/employees/{id}/workload",
+    response_model=EmployeeWorkloadResponse,
+    tags=["Workloads"],
+)
 def get_employee_workload(id: Annotated[int, Path(gt=0)]):
     """Report active work, utilization, and deadline conflicts for one employee."""
     employee = get_employee(id)
@@ -141,7 +147,9 @@ def get_employee_workload(id: Annotated[int, Path(gt=0)]):
     return workload.get_employee_workload_summary(employee, tasks, date.today())
 
 
-@data_routes.get("/workloads", tags=["Workloads"])
+@data_routes.get(
+    "/workloads", response_model=TeamWorkloadResponse, tags=["Workloads"]
+)
 def get_team_workload():
     """Report team workload, fairness metrics, and upcoming deadlines."""
     employees = database.get_employees()

@@ -9,8 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from fastapi.exceptions import ResponseValidationError
 
-from backend import database
+from backend import database, workload
 from backend.main import app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,14 @@ class EmployeeTaskAPITests(unittest.TestCase):
     def create_task(self, **changes):
         response = self.client.post("/tasks", json={**TASK, **changes})
         self.assertEqual(response.status_code, 201, response.text)
+        return response.json()
+
+    def complete_task(self, task):
+        values = {key: value for key, value in task.items() if key != "task_id"}
+        response = self.client.put(
+            f'/tasks/{task["task_id"]}', json={**values, "status": "Completed"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
     def test_status_documentation_and_all_data_routes(self):
@@ -122,6 +131,12 @@ class EmployeeTaskAPITests(unittest.TestCase):
         task = self.create_task(employee_id=employee["employee_id"])
         self.assertEqual(task["employee_id"], employee["employee_id"])
 
+    def test_new_tasks_must_start_active(self):
+        response = self.client.post("/tasks", json={**TASK, "status": "Completed"})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.client.get("/tasks").json(), [])
+        self.assertEqual(self.create_task(status="Active")["status"], "Active")
+
     def test_reject_unknown_assignment_without_saving_task(self):
         response = self.client.post("/tasks", json={**TASK, "employee_id": 999})
         self.assertEqual(response.status_code, 400)
@@ -161,7 +176,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
 
     def test_incomplete_put_does_not_reset_existing_data(self):
         employee = self.create_employee()
-        task = self.create_task(employee_id=employee["employee_id"], status="Completed")
+        task = self.complete_task(self.create_task(employee_id=employee["employee_id"]))
         self.assertEqual(task["status"], "Completed")
         employee_path = f'/employees/{employee["employee_id"]}'
         task_path = f'/tasks/{task["task_id"]}'
@@ -218,7 +233,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.create_task(
             employee_id=employee_id, estimated_hours=3, deadline="2026-11-06"
         )
-        self.create_task(employee_id=employee_id, status="Completed")
+        self.complete_task(self.create_task(employee_id=employee_id))
         self.create_task(employee_id=other_id)
         self.create_task()
 
@@ -265,8 +280,8 @@ class EmployeeTaskAPITests(unittest.TestCase):
             employee_id=assigned_id, deadline="2026-11-10", difficulty="Hard"
         )
         unassigned = self.create_task(estimated_hours=4, difficulty="Hard")
-        self.create_task(employee_id=idle_id, status="Completed", difficulty="Hard")
-        self.create_task(status="Completed")
+        self.complete_task(self.create_task(employee_id=idle_id, difficulty="Hard"))
+        self.complete_task(self.create_task())
 
         response = self.client.get("/workloads")
         self.assertEqual(response.status_code, 200, response.text)
@@ -304,16 +319,44 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(summary["fairness"]["high_priority_tasks"], {})
         self.assertIsNone(summary["fairness"]["one_week_utilization_spread"])
 
-    def test_workload_handles_latest_valid_deadline(self):
+    def test_workload_responses_have_openapi_models(self):
+        specification = self.client.get("/openapi.json").json()
+        expected = {
+            "/employees/{id}/workload": "EmployeeWorkloadResponse",
+            "/workloads": "TeamWorkloadResponse",
+        }
+        for path, model in expected.items():
+            with self.subTest(path=path):
+                schema = specification["paths"][path]["get"]["responses"]["200"][
+                    "content"
+                ]["application/json"]["schema"]
+                self.assertEqual(schema["$ref"], f"#/components/schemas/{model}")
+        team = specification["components"]["schemas"]["TeamWorkloadResponse"]
+        self.assertEqual(
+            team["properties"]["fairness"]["$ref"],
+            "#/components/schemas/TeamFairnessResponse",
+        )
+
+    def test_workload_responses_validate_calculation_outputs(self):
         employee_id = self.create_employee()["employee_id"]
-        self.create_task(employee_id=employee_id, deadline=date.max.isoformat())
-        response = self.client.get(f"/employees/{employee_id}/workload")
-        self.assertEqual(response.status_code, 200, response.text)
-        summary = response.json()
-        self.assertEqual(summary["outstanding_hours"], 10)
-        self.assertEqual(summary["after_2_weeks_count"], 1)
-        self.assertEqual(summary["one_week_utilization"], 0)
-        self.assertEqual(summary["deadline_conflicts"], [])
+        cases = [
+            (
+                f"/employees/{employee_id}/workload",
+                "get_employee_workload_summary",
+                "active_task_count",
+            ),
+            ("/workloads", "get_team_workload_summary", "active_tasks"),
+        ]
+        for path, function, field in cases:
+            with self.subTest(path=path):
+                valid = self.client.get(path).json()
+                with patch.object(workload, function, return_value={**valid, field: -1}):
+                    with self.assertRaises(ResponseValidationError) as error:
+                        self.client.get(path)
+                self.assertIn(
+                    ("response", field),
+                    [detail["loc"] for detail in error.exception.errors()],
+                )
 
 
 if __name__ == "__main__":
