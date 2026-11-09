@@ -1,7 +1,12 @@
-
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from backend.ai_integration import generate_task_recommendations
 
 st.set_page_config(
     page_title="TaskFlow AI",
@@ -11,31 +16,38 @@ st.set_page_config(
 # Sample employees
 if "employees" not in st.session_state:
     st.session_state.employees = [
-        {"Name": "Alex Johnson", "Available Hours": 40,
+        {"Employee ID": 1, "Name": "Alex Johnson", "Available Hours": 40,
          "Experience": "Senior"},
-        {"Name": "Taylor Kim", "Available Hours": 40,
-         "Experience": "Mid-Level"},
-        {"Name": "Morgan Lee", "Available Hours": 40,
-         "Experience": "Mid-Level"},
-        {"Name": "Jordan Smith", "Available Hours": 40,
+        {"Employee ID": 2, "Name": "Taylor Kim", "Available Hours": 40,
+         "Experience": "Mid"},
+        {"Employee ID": 3, "Name": "Morgan Lee", "Available Hours": 40,
+         "Experience": "Mid"},
+        {"Employee ID": 4, "Name": "Jordan Smith", "Available Hours": 40,
          "Experience": "Junior"}
     ]
 
 # Sample tasks
 if "tasks" not in st.session_state:
     st.session_state.tasks = [
-        {"Task": "Website Redesign", "Hours": 16,
+        {"Task ID": 101, "Task": "Website Redesign", "Hours": 16,
          "Due Date": date.today() + timedelta(days=3),
-         "Priority": "High", "Assigned To": "Alex Johnson"},
-        {"Task": "API Integration", "Hours": 12,
+         "Priority": "High", "Difficulty": "Hard",
+         "Status": "Active", "Assigned To": "Alex Johnson"},
+
+        {"Task ID": 102, "Task": "API Integration", "Hours": 12,
          "Due Date": date.today() + timedelta(days=5),
-         "Priority": "High", "Assigned To": "Taylor Kim"},
-        {"Task": "User Testing", "Hours": 10,
+         "Priority": "High", "Difficulty": "Hard",
+         "Status": "Active", "Assigned To": "Taylor Kim"},
+
+        {"Task ID": 103, "Task": "User Testing", "Hours": 10,
          "Due Date": date.today() + timedelta(days=10),
-         "Priority": "Medium", "Assigned To": "Morgan Lee"},
-        {"Task": "Documentation", "Hours": 8,
+         "Priority": "Medium", "Difficulty": "Medium",
+         "Status": "Active", "Assigned To": "Morgan Lee"},
+
+        {"Task ID": 104, "Task": "Documentation", "Hours": 8,
          "Due Date": date.today() + timedelta(days=18),
-         "Priority": "Low", "Assigned To": "Unassigned"}
+         "Priority": "Low", "Difficulty": "Easy",
+         "Status": "Active", "Assigned To": "Unassigned"}
     ]
 
 st.title("TaskFlow AI")
@@ -152,13 +164,12 @@ with dashboard:
 
     left, right = st.columns(2)
 
-    
     with left:
         st.subheader("Upcoming Task Deadlines")
 
         upcoming = sorted(tasks, key=lambda task: task["Due Date"])
 
-        for task in upcoming:         
+        for task in upcoming:
             if task["Assigned To"] == "Unassigned":
                 st.warning(
                     f'Unassigned task: {task["Task"]}'
@@ -170,19 +181,72 @@ with dashboard:
             hide_index=True
         )
 
-
     with right:
         st.subheader("AI Task Recommendations")
-        st.write(
-            "AI recommendations will appear here when the "
-            "backend integration is ready."
-        )
 
-        st.button(
-            "Generate AI Recommendations",
-            disabled=True,
-            help="Waiting for the AI backend."
-        )
+        if st.button("Generate AI Recommendations"):
+
+            employee_info = ""
+
+            for employee in st.session_state.employees:
+                assigned_hours = 0
+
+                for task in st.session_state.tasks:
+                    if task["Assigned To"] == employee["Name"]:
+                        if task["Status"] == "Active":
+                            assigned_hours += task["Hours"]
+
+                employee_info += (
+                    f"Employee ID: {employee['Employee ID']}\n"
+                    f"Name: {employee['Name']}\n"
+                    f"Experience: {employee['Experience']}\n"
+                    f"Available hours: {employee['Available Hours']}\n"
+                    f"Existing workload: {assigned_hours}\n\n"
+                )
+
+            task_info = ""
+
+            for task in st.session_state.tasks:
+                if task["Status"] == "Active":
+                    task_info += (
+                        f"Task ID: {task['Task ID']}\n"
+                        f"Task: {task['Task']}\n"
+                        f"Priority: {task['Priority']}\n"
+                        f"Difficulty: {task['Difficulty']}\n"
+                        f"Deadline: {task['Due Date']}\n"
+                        f"Estimated hours: {task['Hours']}\n\n"
+                    )
+
+            task_information = employee_info + task_info
+
+            try:
+                with st.spinner("Generating recommendations..."):
+                    result = generate_task_recommendations(task_information)
+
+                st.session_state.recommendations = result["recommendations"]
+
+            except Exception as error:
+                st.error(f"Could not generate recommendations: {error}")
+
+        if "recommendations" in st.session_state:
+            for recommendation in st.session_state.recommendations:
+
+                employee_name = ""
+                task_name = ""
+
+                for employee in st.session_state.employees:
+                    if employee["Employee ID"] == recommendation["employee_id"]:
+                        employee_name = employee["Name"]
+
+                for task in st.session_state.tasks:
+                    if task["Task ID"] == recommendation["task_id"]:
+                        task_name = task["Task"]
+
+                if employee_name and task_name:
+                    st.write("---")
+                    st.write("**Task:**", task_name)
+                    st.write("**Recommended Employee:**", employee_name)
+                    st.write("**Reason:**", recommendation["reason"])
 
 # EMPLOYEES
 with employees_tab:
@@ -205,7 +269,7 @@ with employees_tab:
             )
             experience = st.selectbox(
                 "Experience Level",
-                ["Junior", "Mid-Level", "Senior"]
+                ["Junior", "Mid", "Senior"]
             )
 
             submitted = st.form_submit_button("Save Employee")
@@ -219,14 +283,21 @@ with employees_tab:
                 ):
                     st.error("That employee already exists.")
                 else:
+                    new_employee_id = 1
+
+                    for employee in st.session_state.employees:
+                        if employee["Employee ID"] >= new_employee_id:
+                            new_employee_id = employee["Employee ID"] + 1
+
                     st.session_state.employees.append({
+                        "Employee ID": new_employee_id,
                         "Name": name.strip(),
                         "Available Hours": hours,
                         "Experience": experience
                     })
+
                     st.success("Employee added!")
                     st.rerun()
-
 # TASKS
 with tasks_tab:
     st.header("Tasks")
@@ -254,6 +325,12 @@ with tasks_tab:
             priority = st.selectbox(
                 "Priority", ["Low", "Medium", "High"]
             )
+            difficulty = st.selectbox(
+                "Difficulty", ["Easy", "Medium", "Hard"]
+            )
+            status = st.selectbox(
+                "Status", ["Active", "Completed"]
+            )
             names = ["Unassigned"] + [
                 e["Name"] for e in st.session_state.employees
             ]
@@ -265,11 +342,20 @@ with tasks_tab:
                 if not title.strip():
                     st.error("Enter a task name.")
                 else:
+                    new_task_id = 1
+
+                    for task in st.session_state.tasks:
+                        if task["Task ID"] >= new_task_id:
+                            new_task_id = task["Task ID"] + 1
+
                     st.session_state.tasks.append({
+                        "Task ID": new_task_id,
                         "Task": title.strip(),
                         "Hours": hours,
                         "Due Date": deadline,
                         "Priority": priority,
+                        "Difficulty": difficulty,
+                        "Status": status,
                         "Assigned To": assigned_to
                     })
                     st.success("Task added!")
