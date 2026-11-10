@@ -431,7 +431,9 @@ with tasks_tab:
             difficulty = st.selectbox(
                 "Difficulty", ["Easy", "Medium", "Hard"]
             )
-
+            status = st.selectbox(
+                "Status", ["Active", "Completed"]
+            )
             names = ["Unassigned"] + [
                 e["Name"] for e in st.session_state.employees
             ]
