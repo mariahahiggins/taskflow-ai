@@ -117,3 +117,61 @@ class TeamWorkloadResponse(APIModel):
     employees: list[EmployeeWorkloadResponse]
     fairness: TeamFairnessResponse
     upcoming_deadlines: list[TaskResponse]
+
+
+class AssignmentRecommendation(APIModel):
+    """One assignment suggested by Gemini."""
+
+    task_id: int = Field(gt=0, strict=True)
+    employee_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=1)
+
+
+class ValidatedRecommendation(AssignmentRecommendation):
+    """A recommendation with its validation results."""
+
+    valid: bool
+    errors: list[str]
+    warnings: list[str]
+
+
+class RecommendationBatchResponse(APIModel):
+    """Recommendations returned after generation and validation."""
+    recommendations: list[ValidatedRecommendation]
+
+
+class IndividualPreviewRequest(APIModel):
+    """One recommendation and the manager's selected changes."""
+
+    recommendation: AssignmentRecommendation
+    selected_recommendations: list[AssignmentRecommendation]
+
+
+class IndividualPreviewResponse(ValidatedRecommendation):
+    """Individual recommendation preview results."""
+
+    applied: bool
+    capacity_errors: dict[int, list[str]]
+    fairness_warnings: list[str]
+
+
+class SelectedChangesRequest(APIModel):
+    """Assignments currently selected by the manager."""
+
+    selected_recommendations: list[AssignmentRecommendation]
+
+
+class SelectedChangesResponse(APIModel):
+    """Results of evaluating all selected assignments."""
+
+    recommendations: list[ValidatedRecommendation]
+    capacity_errors: dict[int, list[str]]
+    fairness_warnings: list[str]
+    can_commit: bool
+
+
+class ApprovalResponse(APIModel):
+    """Confirmation that assignments were saved."""
+    
+    message: str
+    updated_task_ids: list[int]

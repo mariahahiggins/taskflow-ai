@@ -2,8 +2,18 @@ from datetime import date, timedelta
 
 from backend.fairness import calculate_team_fairness
 
-"""Return total estimated hours for active tasks."""
+def get_capacity_deadline(task, today):
+    """Use the current workweek for overdue task capacity checks."""
+    deadline = date.fromisoformat(task["deadline"])
+
+    if deadline >= today:
+        return deadline
+
+    days_until_friday = (4 - today.weekday()) % 7
+    return today + timedelta(days=days_until_friday)
+
 def calculate_outstanding_hours(tasks):
+    """Return total estimated hours for active tasks."""
     return sum(
         task["estimated_hours"]
         for task in tasks
@@ -96,7 +106,6 @@ def check_deadline_conflicts(employee, tasks, today):
 
     conflicts = []
 
-    # Report each overdue task.
     for task in active_tasks:
         deadline = date.fromisoformat(task["deadline"])
 
@@ -109,16 +118,22 @@ def check_deadline_conflicts(employee, tasks, today):
                 "type": "overdue"
             })
 
-    # Find upcoming deadlines to check for capacity conflicts.
+    
+    capacity_tasks = [
+        {
+            **task,
+            "deadline": get_capacity_deadline(task, today).isoformat()
+        }
+        for task in active_tasks
+    ]
+
     upcoming_deadlines = sorted({
         date.fromisoformat(task["deadline"])
-        for task in active_tasks
-        if date.fromisoformat(task["deadline"]) >= today
+        for task in capacity_tasks
     })
 
     for deadline in upcoming_deadlines:
-        # Include overdue tasks because they are still unfinished.
-        required_hours = calculate_hours_due_by(active_tasks, deadline)
+        required_hours = calculate_hours_due_by(capacity_tasks, deadline)
 
         available_hours = calculate_available_hours(employee["available_hours"], today, deadline)
 

@@ -261,15 +261,18 @@ class TestDeadlineConflicts(unittest.TestCase):
     def test_overdue_and_upcoming_conflicts(self):
         tasks = [make_task(8, -1), make_task(30, 3)]
         conflicts = check_deadline_conflicts(self.employee, tasks, TODAY)
-        self.assertEqual(len(conflicts), 2)
+        self.assertEqual(len(conflicts), 3)
         self.assertEqual(
             [conflict["type"] for conflict in conflicts],
-            ["overdue", "capacity"]
+            ["overdue", "capacity", "capacity"]
         )
-        # Upcoming capacity includes the 8 overdue hours.
-        self.assertEqual(conflicts[1]["required_hours"], 38)
+        self.assertEqual(conflicts[1]["required_hours"], 30)
         self.assertEqual(conflicts[1]["available_hours"], 24)
-        self.assertEqual(conflicts[1]["shortfall_hours"], 14)
+        self.assertEqual(conflicts[1]["shortfall_hours"], 6)
+        self.assertEqual(conflicts[2]["deadline"], (TODAY + timedelta(days=4)).isoformat())
+        self.assertEqual(conflicts[2]["required_hours"], 38)
+        self.assertEqual(conflicts[2]["available_hours"], 30)
+        self.assertEqual(conflicts[2]["shortfall_hours"], 8)
 
     def test_overdue_hours_count_toward_future_capacity(self):
         tasks = [make_task(20, -1), make_task(15, 3)]
@@ -277,9 +280,13 @@ class TestDeadlineConflicts(unittest.TestCase):
         self.assertEqual(len(conflicts), 2)
         self.assertEqual(conflicts[0]["type"], "overdue")
         self.assertEqual(conflicts[1]["type"], "capacity")
+        self.assertEqual(
+            conflicts[1]["deadline"],
+            (TODAY + timedelta(days=4)).isoformat()
+        )
         self.assertEqual(conflicts[1]["required_hours"], 35)
-        self.assertEqual(conflicts[1]["available_hours"], 24)
-        self.assertEqual(conflicts[1]["shortfall_hours"], 11)
+        self.assertEqual(conflicts[1]["available_hours"], 30)
+        self.assertEqual(conflicts[1]["shortfall_hours"], 5)
 
     def test_completed_overdue_hours_do_not_count_toward_capacity(self):
         tasks = [make_task(20, -1, "Completed"), make_task(15, 3)]
