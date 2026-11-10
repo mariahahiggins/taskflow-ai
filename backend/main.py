@@ -1,6 +1,7 @@
 """FastAPI endpoints for the local TaskFlow AI prototype."""
 
 import sqlite3
+import json
 from datetime import date
 from pathlib import Path as FilePath
 from typing import Annotated
@@ -8,7 +9,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Request, status
 from fastapi.responses import JSONResponse
 
-from backend import database, workload
+from pydantic import ValidationError
+from google.genai import errors as genai_errors
+
+from backend import database, workload, assignment, ai_integration
 from backend.models import (
     EmployeeCreate,
     EmployeeResponse,
@@ -18,6 +22,13 @@ from backend.models import (
     TaskResponse,
     TaskUpdate,
     TeamWorkloadResponse,
+    AssignmentRecommendation,
+    RecommendationBatchResponse,
+    IndividualPreviewRequest,
+    IndividualPreviewResponse,
+    SelectedChangesRequest,
+    SelectedChangesResponse,
+    ApprovalResponse
 )
 
 app = FastAPI(
@@ -156,5 +167,194 @@ def get_team_workload():
     tasks = database.get_tasks()
     return workload.get_team_workload_summary(employees, tasks, date.today())
 
+
+@data_routes.post(
+    "/recommendations",
+    response_model=RecommendationBatchResponse,
+    tags=["Recommendations"],
+)
+def generate_recommendations():
+    """Generate and validate AI task recommendations."""
+
+    today = date.today()
+
+    employees = database.get_employees()
+    tasks = database.get_tasks()
+
+    if not employees:
+        return {"recommendations": []}
+
+    eligible_tasks = [
+        task for task in tasks
+        if task["status"] == "Active"
+    ]
+
+    if not eligible_tasks:
+        return {"recommendations": []}
+
+    summary = workload.get_team_workload_summary(employees, tasks, today)
+
+    task_information = ai_integration.format_task_information(
+        employees,
+        tasks,
+        summary,
+        [task["task_id"] for task in eligible_tasks]
+    )
+
+    try:
+        result = ai_integration.generate_task_recommendations(task_information)
+
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned invalid JSON."
+        ) from exc
+
+    except ValueError as exc:
+        if "GEMINI_API_KEY is missing" in str(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini API key is not configured."
+            ) from exc
+
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid response."
+        ) from exc
+    
+    except genai_errors.APIError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini API request failed."
+        ) from exc
+
+    try:
+        recommendations = [
+            AssignmentRecommendation.model_validate(item).model_dump()
+            for item in result["recommendations"]
+        ]
+
+    except (ValidationError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid recommendation format."
+        ) from exc
+
+    eligible_ids = {task["task_id"] for task in eligible_tasks}
+
+    for recommendation in recommendations:
+        if recommendation["task_id"] not in eligible_ids:
+            raise HTTPException(
+                status_code=502,
+                detail="Gemini recommended a task that is not eligible for assignment."
+            )
+
+    return assignment.validate_recommendations(employees, tasks, recommendations)
+
+
+@data_routes.post(
+    "/recommendations/preview",
+    response_model=IndividualPreviewResponse,
+    tags=["Recommendations"],
+)
+def preview_recommendation(request: IndividualPreviewRequest):
+    """Preview one recommendation alongside the manager's selected assignments."""
+
+    today = date.today()
+
+    employees = database.get_employees()
+    tasks = database.get_tasks()
+
+    recommendation = request.recommendation.model_dump()
+
+    selected_recommendations = [
+        item.model_dump()
+        for item in request.selected_recommendations
+    ]
+
+    return assignment.evaluate_individual_recommendation(
+        employees,
+        tasks,
+        recommendation,
+        selected_recommendations,
+        today
+    )
+
+
+@data_routes.post(
+    "/recommendations/evaluate",
+    response_model=SelectedChangesResponse,
+    tags=["Recommendations"],
+)
+def evaluate_recommendations(request: SelectedChangesRequest):
+    """Evaluate all manager-selected assignments before approval."""
+
+    today = date.today()
+
+    employees = database.get_employees()
+    tasks = database.get_tasks()
+
+    selected_recommendations = [
+        recommendation.model_dump()
+        for recommendation in request.selected_recommendations
+    ]
+
+    return assignment.evaluate_selected_changes(
+        employees,
+        tasks,
+        selected_recommendations,
+        today,
+    )
+
+
+@data_routes.post(
+    "/recommendations/approve",
+    response_model=ApprovalResponse,
+    tags=["Recommendations"],
+)
+def approve_recommendations(request: SelectedChangesRequest):
+    """Validate and save manager-approved task assignments."""
+
+    today = date.today()
+
+    selected_recommendations = [
+        item.model_dump()
+        for item in request.selected_recommendations
+    ]
+
+    if not selected_recommendations:
+        raise HTTPException(
+            status_code=400,
+            detail="No recommendations selected for approval."
+        )
+
+    employees = database.get_employees()
+    tasks = database.get_tasks()
+
+    evaluation = assignment.evaluate_selected_changes(
+        employees,
+        tasks,
+        selected_recommendations,
+        today,
+    )
+
+    if not evaluation["can_commit"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected recommendations failed validation."
+        )
+
+    try:
+        updated_task_ids = database.approve_assignments(selected_recommendations)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc)
+        ) from exc
+
+    return {
+        "message": "Selected task assignments approved successfully.",
+        "updated_task_ids": updated_task_ids,
+    }
 
 app.include_router(data_routes)

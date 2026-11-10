@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-Streamlit sends HTTP requests to FastAPI, which handles employee/task database operations and invokes the workload and fairness calculations. The examples below document the currently implemented employee, task, and workload interfaces. The AI endpoints are planned and must be confirmed when implemented.
+Streamlit sends HTTP requests to FastAPI, which handles employee/task database operations and invokes the workload and fairness calculations. The examples below document the implemented employee, task, workload, and AI recommendation interfaces. Recommendation examples illustrate response structure rather than live database results.
 
 ## 2. Employee Endpoints
 
@@ -169,16 +169,162 @@ The example below shows the **response structure**. Empty collections are placeh
 - Deadline conflict checks include overdue unfinished work in cumulative demand for upcoming deadlines.
 - The team `upcoming_deadlines` field is not limited to future dates and includes unassigned active tasks.
 
-## 5. Planned AI Endpoints
+## 5. AI Recommendation Endpoints
 
-These are **proposed**, not confirmed as implemented. Final request/response contracts will be documented after the AI integration is available.
+These four endpoints are implemented. Gemini generates suggestions, while backend validation and manager approval control which assignments are saved. **Generation, preview, and evaluation do not modify task assignments.** Only successful approval persists selected assignments.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/recommendations` | Generate AI assignment/reassignment suggestions |
-| POST | `/recommendations/approve` | Apply a manager-approved recommendation |
+| POST | `/recommendations` | Generate and validate Gemini assignment/reassignment suggestions |
+| POST | `/recommendations/preview` | Preview one recommendation relative to the manager's other selections |
+| POST | `/recommendations/evaluate` | Evaluate the complete set of selected assignments before approval |
+| POST | `/recommendations/approve` | Revalidate and save the manager's selected assignments |
 
-AI recommendations should be checked against workload, deadline, and fairness constraints, and must not change task assignments until manager approval.
+### 5.1 Generate recommendations — `POST /recommendations`
+
+**Request:** No JSON request body is required. The backend reads employees, tasks, and workload summaries from SQLite, sends relevant information to Gemini, then validates the returned recommendations. Only `Active` tasks are eligible.
+
+**Response** (illustrative):
+
+```json
+{
+  "recommendations": [
+    {
+      "task_id": 1,
+      "employee_id": 2,
+      "reason": "Experience and availability fit the task.",
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    }
+  ]
+}
+```
+
+Each item contains `task_id`, `employee_id`, and a nonempty `reason`, plus `valid`, `errors`, and `warnings`. A recommendation can be returned with `valid: false`; the frontend should display its errors rather than offer it for approval. An empty `recommendations` array is possible when there are no employees, no eligible tasks, or no recommendations returned.
+
+The backend rejects malformed Gemini responses, invalid task IDs, and other response-format problems rather than trusting AI output. It validates task/employee existence, Active status, duplicate task IDs, and experience rules. Capacity and fairness impacts are evaluated in the preview/evaluate endpoints.
+
+### 5.2 Preview a recommendation — `POST /recommendations/preview`
+
+**Request** (illustrative):
+
+```json
+{
+  "recommendation": {
+    "task_id": 1,
+    "employee_id": 2,
+    "reason": "Experience and availability fit the task."
+  },
+  "selected_recommendations": [
+    {
+      "task_id": 3,
+      "employee_id": 1,
+      "reason": "Matches the employee's experience."
+    }
+  ]
+}
+```
+
+**Response** (illustrative):
+
+```json
+{
+  "task_id": 1,
+  "employee_id": 2,
+  "reason": "Experience and availability fit the task.",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "applied": false,
+  "capacity_errors": {},
+  "fairness_warnings": []
+}
+```
+
+The endpoint compares the candidate recommendation with a simulated set containing the manager's other selections. `applied` indicates whether the candidate's **task ID is present in `selected_recommendations`**; it does **not** mean the assignment was saved to SQLite. `capacity_errors` maps employee IDs (serialized as JSON string keys) to lists of blocking capacity messages. `fairness_warnings` contains nonblocking changes in workload balance. The preview is read-only.
+
+### 5.3 Evaluate selected assignments — `POST /recommendations/evaluate`
+
+**Request** (illustrative):
+
+```json
+{
+  "selected_recommendations": [
+    {
+      "task_id": 1,
+      "employee_id": 2,
+      "reason": "Experience and availability fit the task."
+    },
+    {
+      "task_id": 3,
+      "employee_id": 1,
+      "reason": "Matches the employee's experience."
+    }
+  ]
+}
+```
+
+**Response** (illustrative):
+
+```json
+{
+  "recommendations": [
+    {
+      "task_id": 1,
+      "employee_id": 2,
+      "reason": "Experience and availability fit the task.",
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "task_id": 3,
+      "employee_id": 1,
+      "reason": "Matches the employee's experience.",
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    }
+  ],
+  "capacity_errors": {},
+  "fairness_warnings": [],
+  "can_commit": true
+}
+```
+
+The backend validates the full selection, simulates the proposed task assignments, checks whether they **worsen existing deadline-capacity shortfalls**, and compares fairness metrics before and after the proposed changes. `can_commit` is true only when at least one recommendation is selected, all selected recommendations are valid, and no blocking capacity errors are found. Experience and fairness warnings are advisory; they do not automatically prevent approval. Invalid recommendations result in `can_commit: false`. An empty selection also results in `can_commit: false`. This endpoint does not save assignments.
+
+### 5.4 Approve selected assignments — `POST /recommendations/approve`
+
+**Request:** Uses the same `selected_recommendations` request body as `/recommendations/evaluate`.
+
+**Successful response** (illustrative):
+
+```json
+{
+  "message": "Selected task assignments approved successfully.",
+  "updated_task_ids": [1, 3]
+}
+```
+
+Approval retrieves current employee and task records and **reruns validation** before writing. If the selection is invalid, approval is rejected. When it succeeds, the database updates the selected tasks' `employee_id` fields in one transaction; if a later update fails, earlier updates in that transaction are rolled back. Other task fields are preserved. `updated_task_ids` identifies the saved tasks; the frontend can combine those IDs with its selected recommendations and refreshed employee/task records to show an approval confirmation.
+
+**Important limitation:** Validation and database writes are not currently enclosed in one shared transaction. Revalidation catches changes made before the approval request's reads, and the write transaction is atomic, but concurrent changes between those steps are not fully prevented.
+
+### 5.5 Validation and error handling
+
+- **Experience rules:** Junior + Hard is blocked; Junior + Medium and Mid + Hard produce warnings.
+- **Eligibility:** Tasks must exist and be `Active`; employees must exist; the same task cannot appear more than once in a selected batch.
+- **Capacity:** A proposed batch is blocked if it worsens an employee's deadline-based capacity shortfall. Existing shortfalls that are not worsened do not automatically block approval.
+- **Fairness:** Changes in one-/two-week utilization spread and distribution of high-priority or difficult tasks can produce nonblocking warnings.
+- **HTTP 400:** Approval request has no selections or fails business-rule validation.
+- **HTTP 409:** Approval detects a task that is no longer eligible during the database update.
+- **HTTP 422:** Request fails Pydantic schema validation (such as nonpositive IDs or missing fields).
+- **HTTP 502:** Recommendation generation receives invalid Gemini output or a Gemini API error.
+- **HTTP 503:** Database is uninitialized; generation also returns 503 if the Gemini API key is not configured.
+
+All four endpoints require an initialized database. Gemini is contacted by `/recommendations` only; preview, evaluation, and approval operate on backend logic and SQLite data.
 
 ## 6. Frontend Integration Notes
 
@@ -187,4 +333,9 @@ AI recommendations should be checked against workload, deadline, and fairness co
 - Fetch `GET /employees/{id}/workload` for a selected employee's detailed view.
 - Display `active_tasks` as **assigned active tasks**, or combine it with `unassigned_tasks` when a total active-task count is needed.
 - Handle nullable utilization and spread fields in the UI.
-- Consult the FastAPI `/docs` page for the exact current Pydantic request schemas, HTTP response codes, and validation errors; these may evolve when workload response models are added.
+- **Recommendation workflow:** Call `POST /recommendations` to generate suggestions; display reasons, validation errors, and warnings. Let managers select/deselect suggestions. The recommendation UI does not edit the recommended employee; managers can use the existing task-editing interface for manual reassignment.
+- Call `POST /recommendations/preview` for an individual recommendation's incremental capacity/fairness impact, and `POST /recommendations/evaluate` for a final review of all selected assignments. Disable approval when `can_commit` is false.
+- Show a **pre-approval summary** with task names, employee names, validation results, and capacity/fairness messages. The API returns IDs; resolve names from employee and task records.
+- After `POST /recommendations/approve` succeeds, show a **confirmation summary** using `updated_task_ids` and the selected recommendations. Refresh `GET /tasks` and `GET /workloads` to display the saved assignments and updated metrics.
+- Handle HTTP errors and display useful feedback; in particular, a recommendation can become invalid between evaluation and approval.
+- Consult FastAPI's `/docs` page for the exact current Pydantic request schemas, HTTP response codes, and validation errors as the implementation evolves.
