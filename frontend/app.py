@@ -313,7 +313,7 @@ with tasks_tab:
     )
 
     # Edit tasks
-    st.subheader("Edit Existing Tasks")
+    st.expander("Edit Existing Tasks")
 
     if st.session_state.tasks:
 
