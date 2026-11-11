@@ -78,6 +78,39 @@ def group_tasks_by_deadline(tasks, today):
 
     return groups
 
+"""
+Group active task hours into calendar weeks.
+
+This week includes overdue tasks and tasks due through Sunday.
+Next week includes tasks due the following Monday through Sunday.
+Later includes tasks due after next Sunday.
+"""
+def group_task_hours_by_calendar_week(tasks, today):
+    this_sunday = today + timedelta(days=6 - today.weekday())
+    next_sunday = this_sunday + timedelta(days=7)
+
+    hours = {
+        "this_week": 0.0,
+        "next_week": 0.0,
+        "later": 0.0
+    }
+
+    for task in tasks:
+        if task["status"] != "Active":
+            continue
+
+        deadline = date.fromisoformat(task["deadline"])
+        estimated_hours = task["estimated_hours"]
+
+        if deadline <= this_sunday:
+            hours["this_week"] += estimated_hours
+        elif deadline <= next_sunday:
+            hours["next_week"] += estimated_hours
+        else:
+            hours["later"] += estimated_hours
+
+    return hours
+
 """Return active task hours due on or before a deadline."""
 def calculate_hours_due_by(tasks, deadline):
     total_hours = 0
@@ -216,6 +249,8 @@ def get_employee_workload_summary(employee, tasks, today):
 
     deadline_groups = group_tasks_by_deadline(employee_tasks, today)
 
+    calendar_week_hours = group_task_hours_by_calendar_week(employee_tasks, today)
+
     utilization = calculate_utilization(employee, employee_tasks, today)
 
     deadline_conflicts = check_deadline_conflicts(employee, employee_tasks, today)
@@ -231,6 +266,9 @@ def get_employee_workload_summary(employee, tasks, today):
         "within_1_week_count": len(deadline_groups["within_1_week"]),
         "week_2_count": len(deadline_groups["week_2"]),
         "after_2_weeks_count": len(deadline_groups["after_2_weeks"]),
+        "this_week_hours": calendar_week_hours["this_week"],
+        "next_week_hours": calendar_week_hours["next_week"],
+        "later_hours": calendar_week_hours["later"],
         "one_week_utilization": utilization["one_week"],
         "two_week_utilization": utilization["two_weeks"],
         "deadline_conflicts": deadline_conflicts

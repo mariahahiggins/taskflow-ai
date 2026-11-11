@@ -79,6 +79,9 @@ The following example illustrates the **field names and types**, not a live data
   "within_1_week_count": 1,
   "week_2_count": 1,
   "after_2_weeks_count": 0,
+  "this_week_hours": 10,
+  "next_week_hours": 8,
+  "later_hours": 0,
   "one_week_utilization": 25.0,
   "two_week_utilization": 22.5,
   "deadline_conflicts": []
@@ -91,6 +94,9 @@ The following example illustrates the **field names and types**, not a live data
 - `within_1_week_count`: active tasks due today through seven days from today.
 - `week_2_count`: active tasks due eight through fourteen days from today.
 - `after_2_weeks_count`: active tasks due more than fourteen days from today.
+- `this_week_hours`: total estimated hours for active assigned tasks that are overdue or due by the end of the current calendar week (Sunday).
+- `next_week_hours`: total estimated hours for active assigned tasks due Monday through Sunday of the following calendar week.
+- `later_hours`: total estimated hours for active assigned tasks due after the following Sunday.
 - `one_week_utilization`, `two_week_utilization`: percentage of available working hours needed for active tasks due by each horizon, including overdue tasks. May be `null` if capacity is zero.
 - `deadline_conflicts`: list of overdue or insufficient-capacity deadline warnings.
 

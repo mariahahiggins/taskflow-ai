@@ -79,6 +79,9 @@ class EmployeeWorkloadResponse(EmployeeResponse):
     within_1_week_count: int = Field(ge=0, strict=True)
     week_2_count: int = Field(ge=0, strict=True)
     after_2_weeks_count: int = Field(ge=0, strict=True)
+    this_week_hours: float = Field(ge=0)
+    next_week_hours: float = Field(ge=0)
+    later_hours: float = Field(ge=0)
     one_week_utilization: float | None = Field(ge=0)
     two_week_utilization: float | None = Field(ge=0)
     deadline_conflicts: list[DeadlineConflictResponse]

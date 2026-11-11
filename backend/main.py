@@ -240,16 +240,36 @@ def generate_recommendations():
             detail="Gemini returned an invalid recommendation format."
         ) from exc
 
+    
     eligible_ids = {task["task_id"] for task in eligible_tasks}
+    task_lookup = {task["task_id"]: task for task in tasks}
+
+    filtered_recommendations = []
+    seen_task_ids = set()
 
     for recommendation in recommendations:
-        if recommendation["task_id"] not in eligible_ids:
-            raise HTTPException(
-                status_code=502,
-                detail="Gemini recommended a task that is not eligible for assignment."
-            )
+        task_id = recommendation["task_id"]
+        employee_id = recommendation["employee_id"]
 
-    return assignment.validate_recommendations(employees, tasks, recommendations)
+        if task_id not in eligible_ids:
+            raise HTTPException(
+            status_code=502,
+            detail="Gemini recommended a task that is not eligible."
+        )
+
+        if task_id in seen_task_ids:
+            continue
+
+        task = task_lookup[task_id]
+
+        if task["employee_id"] == employee_id:
+            continue
+
+        seen_task_ids.add(task_id)
+        filtered_recommendations.append(recommendation)
+
+    return assignment.validate_recommendations(employees, tasks, filtered_recommendations)
+
 
 
 @data_routes.post(
