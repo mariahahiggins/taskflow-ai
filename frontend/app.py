@@ -7,49 +7,66 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from backend.ai_integration import generate_task_recommendations
+from frontend.api_client import (
+    get_employees,
+    create_employee,
+    get_tasks,
+    create_task,
+    update_task
+)
 
 st.set_page_config(
     page_title="TaskFlow AI",
     layout="wide"
 )
 
-# Sample employees
-if "employees" not in st.session_state:
+# Load employees from the FastAPI backend
+try:
+    api_employees = get_employees()
+
     st.session_state.employees = [
-        {"Employee ID": 1, "Name": "Alex Johnson", "Available Hours": 40,
-         "Experience": "Senior"},
-        {"Employee ID": 2, "Name": "Taylor Kim", "Available Hours": 40,
-         "Experience": "Mid"},
-        {"Employee ID": 3, "Name": "Morgan Lee", "Available Hours": 40,
-         "Experience": "Mid"},
-        {"Employee ID": 4, "Name": "Jordan Smith", "Available Hours": 40,
-         "Experience": "Junior"}
+        {
+            "Employee ID": employee["employee_id"],
+            "Name": employee["name"],
+            "Available Hours": employee["available_hours"],
+            "Experience": employee["experience_level"]
+        }
+        for employee in api_employees
     ]
 
-# Sample tasks
-if "tasks" not in st.session_state:
+except Exception as error:
+    st.error(f"Could not load employees from the backend: {error}")
+    if "employees" not in st.session_state:
+        st.session_state.employees = []
+
+# Load tasks from FastAPI backend
+try:
+    api_tasks = get_tasks()
+
+    employee_names = {
+        employee["Employee ID"]: employee["Name"]
+        for employee in st.session_state.employees
+    }
+
     st.session_state.tasks = [
-        {"Task ID": 101, "Task": "Website Redesign", "Hours": 16,
-         "Due Date": date.today() + timedelta(days=3),
-         "Priority": "High", "Difficulty": "Hard",
-         "Status": "Active", "Assigned To": "Alex Johnson"},
-
-        {"Task ID": 102, "Task": "API Integration", "Hours": 12,
-         "Due Date": date.today() + timedelta(days=5),
-         "Priority": "High", "Difficulty": "Hard",
-         "Status": "Active", "Assigned To": "Taylor Kim"},
-
-        {"Task ID": 103, "Task": "User Testing", "Hours": 10,
-         "Due Date": date.today() + timedelta(days=10),
-         "Priority": "Medium", "Difficulty": "Medium",
-         "Status": "Active", "Assigned To": "Morgan Lee"},
-
-        {"Task ID": 104, "Task": "Documentation", "Hours": 8,
-         "Due Date": date.today() + timedelta(days=18),
-         "Priority": "Low", "Difficulty": "Easy",
-         "Status": "Active", "Assigned To": "Unassigned"}
+        {
+            "Task ID": task["task_id"],
+            "Task": task["title"],
+            "Hours": task["estimated_hours"],
+            "Due Date": date.fromisoformat(task["deadline"]),
+            "Priority": task["priority"],
+            "Difficulty": task["difficulty"],
+            "Assigned To": employee_names.get(task["employee_id"], "Unassigned"),
+            "Status": task["status"]
+        }
+        for task in api_tasks
     ]
 
+except Exception as error:
+    st.error(f"Could not load tasks from the backend: {error}")
+
+    if "tasks" not in st.session_state:
+        st.session_state.tasks = []
 st.title("TaskFlow AI")
 st.caption("AI-assisted task management and workload balancing")
 
@@ -258,19 +275,21 @@ with employees_tab:
 
     st.dataframe(
         pd.DataFrame(st.session_state.employees),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
     with st.expander("Add Employee"):
         with st.form("employee_form"):
             name = st.text_input("Employee Name")
+
             hours = st.number_input(
                 "Available Hours per Week",
                 min_value=1,
                 max_value=168,
                 value=40
             )
+
             experience = st.selectbox(
                 "Experience Level",
                 ["Junior", "Mid", "Senior"]
@@ -281,27 +300,30 @@ with employees_tab:
             if submitted:
                 if not name.strip():
                     st.error("Enter an employee name.")
+
                 elif any(
                     e["Name"].casefold() == name.strip().casefold()
                     for e in st.session_state.employees
                 ):
                     st.error("That employee already exists.")
+
                 else:
-                    new_employee_id = 1
+                    employee_data = {
+                        "name": name.strip(),
+                        "available_hours": float(hours),
+                        "experience_level": experience
+                    }
 
-                    for employee in st.session_state.employees:
-                        if employee["Employee ID"] >= new_employee_id:
-                            new_employee_id = employee["Employee ID"] + 1
+                    try:
+                        result = create_employee(employee_data)
 
-                    st.session_state.employees.append({
-                        "Employee ID": new_employee_id,
-                        "Name": name.strip(),
-                        "Available Hours": hours,
-                        "Experience": experience
-                    })
+                        st.success(
+                            f'{result["name"]} was successfully added!'
+                        )
+                        st.rerun()
 
-                    st.success("Employee added!")
-                    st.rerun()
+                    except Exception as error:
+                        st.error(f"Could not add employee: {error}")
 # TASKS
 with tasks_tab:
     st.header("Tasks")
@@ -313,102 +335,118 @@ with tasks_tab:
     )
 
     # Edit tasks
-    st.expander("Edit Existing Tasks")
+    with st.expander("Edit Existing Tasks"):
 
-    if st.session_state.tasks:
+        if st.session_state.tasks:
 
-        task_options = {
-            f'{task["Task ID"]} - {task["Task"]}': task["Task ID"]
-            for task in st.session_state.tasks
-        }
+            task_options = {
+                f'{task["Task ID"]} - {task["Task"]}': task["Task ID"]
+                for task in st.session_state.tasks
+            }
 
-        selected_task = st.selectbox(
-            "Choose a task",
-            list(task_options.keys())
-        )
-
-        selected_task_id = task_options[selected_task]
-
-        task_to_edit = next(
-            task for task in st.session_state.tasks
-            if task["Task ID"] == selected_task_id
-        )
-
-        with st.form("edit_task_form"):
-
-            edited_title = st.text_input(
-                "Task Name",
-                value=task_to_edit["Task"]
+            selected_task = st.selectbox(
+                "Choose a task",
+                list(task_options.keys())
             )
 
-            edited_hours = st.number_input(
-                "Estimated Hours",
-                min_value=1,
-                max_value=1000,
-                value=int(task_to_edit["Hours"])
+            selected_task_id = task_options[selected_task]
+
+            task_to_edit = next(
+                task for task in st.session_state.tasks
+                if task["Task ID"] == selected_task_id
             )
 
-            edited_deadline = st.date_input(
-                "Due Date",
-                value=task_to_edit["Due Date"]
-            )
+            with st.container(border=True):
+                with st.form("edit_task_form"):
 
-            edited_priority = st.selectbox(
-                "Priority",
-                ["Low", "Medium", "High"],
-                index=["Low", "Medium", "High"].index(
-                    task_to_edit["Priority"]
-                )
-            )
+                    edited_title = st.text_input(
+                        "Task Name",
+                        value=task_to_edit["Task"]
+                    )
 
-            edited_difficulty = st.selectbox(
-                "Difficulty",
-                ["Easy", "Medium", "Hard"],
-                index=["Easy", "Medium", "Hard"].index(
-                    task_to_edit["Difficulty"]
-                )
-            )
+                    edited_hours = st.number_input(
+                        "Estimated Hours",
+                        min_value=1,
+                        max_value=1000,
+                        value=int(task_to_edit["Hours"])
+                    )
 
-            employee_names = ["Unassigned"] + [
-                employee["Name"]
-                for employee in st.session_state.employees
-            ]
+                    edited_deadline = st.date_input(
+                        "Due Date",
+                        value=task_to_edit["Due Date"]
+                    )
 
-            edited_employee = st.selectbox(
-                "Assigned To",
-                employee_names,
-                index=employee_names.index(
-                    task_to_edit["Assigned To"]
-                )
-            )
+                    edited_priority = st.selectbox(
+                        "Priority",
+                        ["Low", "Medium", "High"],
+                        index=["Low", "Medium", "High"].index(
+                            task_to_edit["Priority"]
+                        )
+                    )
 
-            edited_status = st.selectbox(
-                "Status",
-                ["Active", "Completed"],
-                index=["Active", "Completed"].index(
-                    task_to_edit["Status"]
-                )
-            )
+                    edited_difficulty = st.selectbox(
+                        "Difficulty",
+                        ["Easy", "Medium", "Hard"],
+                        index=["Easy", "Medium", "Hard"].index(
+                            task_to_edit["Difficulty"]
+                        )
+                    )
 
-            save_task = st.form_submit_button("Save Changes")
+                    employee_names = ["Unassigned"] + [
+                        employee["Name"]
+                        for employee in st.session_state.employees
+                    ]
 
-            if save_task:
-                if not edited_title.strip():
-                    st.error("Please enter a task name.")
-                else:
-                    task_to_edit["Task"] = edited_title.strip()
-                    task_to_edit["Hours"] = edited_hours
-                    task_to_edit["Due Date"] = edited_deadline
-                    task_to_edit["Priority"] = edited_priority
-                    task_to_edit["Difficulty"] = edited_difficulty
-                    task_to_edit["Assigned To"] = edited_employee
-                    task_to_edit["Status"] = edited_status
+                    edited_employee = st.selectbox(
+                        "Assigned To",
+                        employee_names,
+                        index=employee_names.index(
+                            task_to_edit["Assigned To"]
+                        )
+                    )
 
-                    st.success("Task updated!")
-                    st.rerun()
+                    edited_status = st.selectbox(
+                        "Status",
+                        ["Active", "Completed"],
+                        index=["Active", "Completed"].index(
+                            task_to_edit["Status"]
+                        )
+                    )
 
-    else:
-        st.info("No tasks available to edit.")
+                    save_task = st.form_submit_button("Save Changes")
+
+                    if save_task:
+                        if not edited_title.strip():
+                            st.error("Please enter a task name.")
+                        else:
+                            employee_id = next(
+                                (
+                                    employee["Employee ID"]
+                                    for employee in st.session_state.employees
+                                    if employee["Name"] == edited_employee
+                                ),
+                                None
+                            )
+
+                            task_data = {
+                                "title": edited_title.strip(),
+                                "estimated_hours": float(edited_hours),
+                                "deadline": edited_deadline.isoformat(),
+                                "priority": edited_priority,
+                                "difficulty": edited_difficulty,
+                                "status": edited_status,
+                                "employee_id": employee_id
+                            }
+
+                            try:
+                                update_task(selected_task_id, task_data)
+                                st.success("Task updated successfully!")
+                                st.rerun()
+
+                            except Exception as error:
+                                st.error(f"Could not update task: {error}")
+        else:
+            st.info("No tasks available to edit.")
 
 
     with st.expander("Add Task"):
@@ -431,9 +469,7 @@ with tasks_tab:
             difficulty = st.selectbox(
                 "Difficulty", ["Easy", "Medium", "Hard"]
             )
-            status = st.selectbox(
-                "Status", ["Active", "Completed"]
-            )
+
             names = ["Unassigned"] + [
                 e["Name"] for e in st.session_state.employees
             ]
@@ -445,21 +481,30 @@ with tasks_tab:
                 if not title.strip():
                     st.error("Enter a task name.")
                 else:
-                    new_task_id = 1
+                    employee_id = next(
+                        (
+                            employee["Employee ID"]
+                            for employee in st.session_state.employees
+                            if employee["Name"] == assigned_to
+                        ),
+                        None
+                    )
 
-                    for task in st.session_state.tasks:
-                        if task["Task ID"] >= new_task_id:
-                            new_task_id = task["Task ID"] + 1
+                    task_data = {
+                        "title": title.strip(),
+                        "estimated_hours": float(hours),
+                        "deadline": deadline.isoformat(),
+                        "priority": priority,
+                        "difficulty": difficulty,
+                        "employee_id": employee_id
+                    }
 
-                    st.session_state.tasks.append({
-                        "Task ID": new_task_id,
-                        "Task": title.strip(),
-                        "Hours": hours,
-                        "Due Date": deadline,
-                        "Priority": priority,
-                        "Difficulty": difficulty,
-                        "Status": "Active",
-                        "Assigned To": assigned_to
-                    })
-                    st.success("Task added!")
-                    st.rerun()
+                    try:
+                        result = create_task(task_data)
+                        st.success(
+                            f'Task "{result["title"]}" was successfully added!'
+                        )
+                        st.rerun()
+
+                    except Exception as error:
+                        st.error(f"Could not add task: {error}")
