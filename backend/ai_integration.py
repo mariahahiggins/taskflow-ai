@@ -7,6 +7,18 @@ from google import genai
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+
+def format_task_information(employees, tasks, workload_summary, eligible_task_ids):
+    """Format database and workload data for Gemini."""
+
+    return json.dumps({
+        "employees": employees,
+        "tasks": tasks,
+        "workload_summary": workload_summary,
+        "eligible_task_ids": eligible_task_ids
+    }, indent=2)
+
+
 def generate_task_recommendations(task_information):
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -26,12 +38,25 @@ Look at experience, available hours, current workload,
 task difficulty, and deadlines.
 
 Rules:
+- Only recommend Active tasks. Never recommend Completed tasks.
 - Junior employees should get Easy tasks.
-- Junior employees can get Medium tasks, but include a warning.
+- Junior employees can get Medium tasks, but this should be noted in the reason.
 - Junior employees should not get Hard tasks.
 - Mid employees can get Easy and Medium tasks.
-- Mid employees can get Hard tasks with a warning.
+- Mid employees can get Hard tasks, but this should be noted in the reason.
 - Senior employees can get any task.
+- Consider each employee's existing assignments and available working hours.
+- Available hours represent weekly capacity, spread across Monday-Friday.
+- Tasks may span multiple weeks if their deadlines allow enough working hours.
+- Active overdue tasks are eligible for assignment or reassignment.
+- Treat overdue tasks as urgent, but evaluate their capacity against the remaining workweek through Friday, not their original deadline or today alone.
+- Account for other assigned tasks when evaluating whether an employee has enough capacity.
+- Do not recommend assignments that worsen existing deadline capacity conflicts.
+- Consider task priority and distribute difficult and high-priority work fairly.
+- Recommend only assignments that are feasible based on experience and capacity.
+- Recommend assignments only for task IDs listed in eligible_task_ids.
+- Other tasks are provided for workload context only.
+
 
 Do not recommend someone who does not have enough available
 hours or the experience needed for the task.

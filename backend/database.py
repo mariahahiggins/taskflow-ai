@@ -4,7 +4,6 @@ from contextlib import contextmanager
 from datetime import date
 import re
 
-# Locate the SQLite database in the backend folder
 DATABASE_PATH = Path(__file__).resolve().parent / "taskflow.db"
 
 def validate_deadline(deadline):
@@ -157,3 +156,27 @@ def update_task(task_id, title, estimated_hours, deadline, priority, difficulty,
         updated = cursor.rowcount > 0
 
     return updated
+
+def approve_assignments(recommendations):
+
+    with get_connection() as connection:
+        for recommendation in recommendations:
+            cursor = connection.execute(
+                """
+                UPDATE tasks
+                SET employee_id = ?
+                WHERE task_id = ?
+                  AND status = 'Active'
+                """,
+                (
+                    recommendation["employee_id"],
+                    recommendation["task_id"]
+                )
+            )
+
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    f"Task {recommendation['task_id']} is no longer eligible."
+                )
+
+    return [item["task_id"] for item in recommendations]
