@@ -318,15 +318,16 @@ def get_team_workload_summary(employees, tasks, today):
 
     return {
         "total_employees": len(employees),
-        "active_tasks": len(assigned_active_tasks),
+        "active_tasks": len(assigned_active_tasks) + len(unassigned_tasks),
         "unassigned_tasks": len(unassigned_tasks),
         "outstanding_hours": sum(
             summary["outstanding_hours"]
             for summary in employee_summaries
         ),
         "overdue_tasks": sum(
-            summary["overdue_task_count"]
-            for summary in employee_summaries
+            1 for task in tasks
+            if task["status"] == "Active"
+            and date.fromisoformat(task["deadline"]) < today
         ),
         "employees_with_conflicts": employees_with_conflicts,
         "total_deadline_conflicts": total_deadline_conflicts,
