@@ -56,6 +56,8 @@ Rules:
 - Recommend only assignments that are feasible based on experience and capacity.
 - Recommend assignments only for task IDs listed in eligible_task_ids.
 - Other tasks are provided for workload context only.
+- In the reason field always use the actual task title instead of Task ID.
+- In the reason field, always use the employee's actual name instead of Employee ID.
 
 
 Do not recommend someone who does not have enough available
