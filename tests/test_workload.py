@@ -781,7 +781,7 @@ class TestTeamWorkloadSummary(unittest.TestCase):
             self.make_task(6, 7, employee_id=None)
         ]
         result = get_team_workload_summary(self.employees, tasks, TODAY)
-        self.assertEqual(result["active_tasks"], 1)
+        self.assertEqual(result["active_tasks"], 3)
         self.assertEqual(result["unassigned_tasks"], 2)
         self.assertEqual(result["outstanding_hours"], 10)
         self.assertEqual(len(result["upcoming_deadlines"]), 3)

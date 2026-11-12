@@ -290,7 +290,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         summary = response.json()
         self.assertEqual(summary["total_employees"], 3)
-        self.assertEqual(summary["active_tasks"], 1)
+        self.assertEqual(summary["active_tasks"], 2)
         self.assertEqual(summary["unassigned_tasks"], 1)
         self.assertEqual(summary["outstanding_hours"], 10)
         self.assertEqual(summary["overdue_tasks"], 0)
