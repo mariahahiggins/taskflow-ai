@@ -59,6 +59,7 @@ Rules:
 - Do not recommend assignments that worsen existing deadline capacity conflicts.
 - Consider task priority and distribute difficult and high-priority work fairly.
 - Recommend only assignments that are feasible based on experience and capacity.
+- Always use employee names rather than employee IDs when explaining recommendations in the reason field.
 - Recommend assignments only for task IDs listed in eligible_task_ids.
 - Other tasks are provided for workload context only.
 - Prioritize assigning currently unassigned tasks.

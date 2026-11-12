@@ -486,24 +486,25 @@ with dashboard:
                 if all_capacity_errors:
                     count = len(all_capacity_errors)
 
-                    st.markdown(
+                    with st.expander(
                         f"❌ {count} blocking capacity "
                         f"{'conflict' if count == 1 else 'conflicts'}"
-                    )
+                    ):
+                        for error in all_capacity_errors:
+                            st.caption(error)
 
-                    for error in all_capacity_errors:
-                        st.caption(error)
-
-                # Count grouped fairness warnings
+                # Show grouped fairness warnings
                 compact_warnings = compact_fairness_warnings(fairness_warnings)
 
                 if compact_warnings:
                     count = len(compact_warnings)
 
-                    st.markdown(
+                    with st.expander(
                         f"⚠️ {count} fairness "
                         f"{'warning' if count == 1 else 'warnings'}"
-                    )
+                    ):
+                        for warning in compact_warnings:
+                            st.caption(warning)
 
                 if evaluation.get("can_commit", False):
                     st.markdown("✅ Selected changes are ready for approval.")
