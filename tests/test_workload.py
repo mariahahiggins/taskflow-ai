@@ -9,6 +9,7 @@ from workload import (
     calculate_outstanding_hours,
     calculate_available_hours,
     group_tasks_by_deadline,
+    group_task_hours_by_calendar_week,
     calculate_hours_due_by,
     check_deadline_conflicts,
     get_upcoming_deadlines,
@@ -142,6 +143,78 @@ class TestDeadlineGroups(unittest.TestCase):
         with self.assertRaises(ValueError):
             group_tasks_by_deadline([task], TODAY)
 
+class TestCalendarWeekHours(unittest.TestCase):
+    def test_empty_tasks(self):
+        result = group_task_hours_by_calendar_week([], TODAY)
+        self.assertEqual(result, {"this_week": 0, "next_week": 0, "later": 0})
+
+    def test_week_boundaries(self):
+        tasks = [
+            make_task(2, 0),    # Monday, this week
+            make_task(3, 6),    # Sunday, this week
+            make_task(5, 7),    # Monday, next week
+            make_task(7, 13),   # Sunday, next week
+            make_task(11, 14)   # Monday, later
+        ]
+        result = group_task_hours_by_calendar_week(tasks, TODAY)
+        self.assertEqual(result["this_week"], 5)
+        self.assertEqual(result["next_week"], 12)
+        self.assertEqual(result["later"], 11)
+
+    def test_overdue_tasks_included_this_week(self):
+        tasks = [
+            make_task(8, -10),
+            make_task(4, -1),
+            make_task(6, 3)
+        ]
+        result = group_task_hours_by_calendar_week(tasks, TODAY)
+        self.assertEqual(result["this_week"], 18)
+        self.assertEqual(result["next_week"], 0)
+        self.assertEqual(result["later"], 0)
+
+    def test_midweek_date(self):
+        wednesday = date(2026, 11, 11)
+        tasks = [
+            {
+                "estimated_hours": 5,
+                "deadline": "2026-11-13",
+                "status": "Active"
+            },
+            {
+                "estimated_hours": 10,
+                "deadline": "2026-11-16",
+                "status": "Active"
+            },
+            {
+                "estimated_hours": 15,
+                "deadline": "2026-11-23",
+                "status": "Active"
+            }
+        ]
+        result = group_task_hours_by_calendar_week(tasks, wednesday)
+        self.assertEqual(result["this_week"], 5)
+        self.assertEqual(result["next_week"], 10)
+        self.assertEqual(result["later"], 15)
+
+    def test_completed_tasks_excluded(self):
+        tasks = [
+            make_task(10, 2, "Completed"),
+            make_task(20, -3, "Completed"),
+            make_task(5, 3)
+        ]
+        result = group_task_hours_by_calendar_week(tasks, TODAY)
+        self.assertEqual(result["this_week"], 5)
+        self.assertEqual(result["next_week"], 0)
+        self.assertEqual(result["later"], 0)
+
+    def test_fractional_hours(self):
+        tasks = [
+            make_task(2.5, 3),
+            make_task(7.75, 10)
+        ]
+        result = group_task_hours_by_calendar_week(tasks, TODAY)
+        self.assertAlmostEqual(result["this_week"], 2.5)
+        self.assertAlmostEqual(result["next_week"], 7.75)
 
 class TestHoursDueBy(unittest.TestCase):
     def test_empty_list(self):
@@ -458,6 +531,9 @@ class TestEmployeeWorkloadSummary(unittest.TestCase):
         self.assertEqual(result["one_week_utilization"], 0.0)
         self.assertEqual(result["two_week_utilization"], 0.0)
         self.assertEqual(result["deadline_conflicts"], [])
+        self.assertEqual(result["this_week_hours"], 0)
+        self.assertEqual(result["next_week_hours"], 0)
+        self.assertEqual(result["later_hours"], 0)
 
     def test_employee_information(self):
         result = get_employee_workload_summary(self.employee, [], TODAY)
@@ -494,6 +570,9 @@ class TestEmployeeWorkloadSummary(unittest.TestCase):
         self.assertEqual(result["within_1_week_count"], 1)
         self.assertEqual(result["week_2_count"], 1)
         self.assertEqual(result["after_2_weeks_count"], 1)
+        self.assertEqual(result["this_week_hours"], 15)
+        self.assertEqual(result["next_week_hours"], 15)
+        self.assertEqual(result["later_hours"], 20)
 
     def test_utilization_values(self):
         tasks = [make_task(24, 3),make_task(20, 10)]
@@ -523,6 +602,9 @@ class TestEmployeeWorkloadSummary(unittest.TestCase):
         self.assertEqual(result["within_1_week_count"], 1)
         self.assertEqual(result["week_2_count"], 2)
         self.assertEqual(result["after_2_weeks_count"], 1)
+        self.assertEqual(result["this_week_hours"], 0)
+        self.assertEqual(result["next_week_hours"], 15)
+        self.assertEqual(result["later_hours"], 35)
 
     def test_completed_tasks_excluded(self):
         tasks = [make_task(10, 3, "Completed"), make_task(15, -2, "Completed")]
@@ -531,6 +613,9 @@ class TestEmployeeWorkloadSummary(unittest.TestCase):
         self.assertEqual(result["active_task_count"], 0)
         self.assertEqual(result["overdue_task_count"], 0)
         self.assertEqual(result["deadline_conflicts"], [])
+        self.assertEqual(result["this_week_hours"], 0)
+        self.assertEqual(result["next_week_hours"], 0)
+        self.assertEqual(result["later_hours"], 0)
 
     def test_zero_availability(self):
         employee = {"employee_id": 2, "name": "Alex", "experience_level": "Junior", "available_hours": 0}

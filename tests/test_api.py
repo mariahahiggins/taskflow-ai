@@ -263,6 +263,9 @@ class EmployeeTaskAPITests(unittest.TestCase):
                 "type": "capacity",
             },
         ])
+        self.assertEqual(summary["this_week_hours"], 5)
+        self.assertEqual(summary["next_week_hours"], 0)
+        self.assertEqual(summary["later_hours"], 0)
 
     def test_workload_requires_a_valid_existing_employee(self):
         missing = self.client.get("/employees/999/workload")
@@ -294,6 +297,9 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(summary["total_deadline_conflicts"], 0)
         self.assertEqual(summary["upcoming_deadlines"], [unassigned, assigned])
         employees = {item["employee_id"]: item for item in summary["employees"]}
+        self.assertEqual(employees[assigned_id]["this_week_hours"], 0)
+        self.assertEqual(employees[assigned_id]["next_week_hours"], 10)
+        self.assertEqual(employees[assigned_id]["later_hours"], 0)
         self.assertIsNone(employees[zero_capacity_id]["one_week_utilization"])
         self.assertIsNone(employees[zero_capacity_id]["two_week_utilization"])
         fairness = summary["fairness"]

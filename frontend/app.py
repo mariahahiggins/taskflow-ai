@@ -6,13 +6,18 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from backend.ai_integration import generate_task_recommendations
+import requests
 from frontend.api_client import (
     get_employees,
     create_employee,
     get_tasks,
     create_task,
-    update_task
+    update_task,
+    get_workloads,
+    generate_recommendations,
+    preview_recommendation,
+    evaluate_recommendations,
+    approve_recommendations
 )
 
 st.set_page_config(
@@ -67,6 +72,34 @@ except Exception as error:
 
     if "tasks" not in st.session_state:
         st.session_state.tasks = []
+
+def compact_fairness_warnings(warnings):
+    """Combine related fairness warnings for display."""
+    result = []
+    high_priority = False
+    difficult = False
+
+    for warning in warnings:
+        text = warning.lower()
+
+        if "high-priority task distribution" in text or \
+           "high-priority hours distribution" in text:
+            if not high_priority:
+                result.append("High-priority workload distribution becomes less balanced.")
+                high_priority = True
+
+        elif "difficult task distribution" in text or \
+             "difficult task hours distribution" in text:
+            if not difficult:
+                result.append("Difficult-task workload distribution becomes less balanced.")
+                difficult = True
+
+        else:
+            result.append(warning)
+
+    return result
+
+
 st.title("TaskFlow AI")
 st.caption("AI-assisted task management and workload balancing")
 
@@ -78,77 +111,33 @@ dashboard, employees_tab, tasks_tab = st.tabs(
 with dashboard:
     st.header("Employee Workload Overview")
 
-    employees = st.session_state.employees
-    tasks = st.session_state.tasks
-
-    active_tasks = sum(
-        1 for task in tasks
-        if task["Status"] == "Active"
-    )
-
-    overdue_tasks = sum(
-        1 for task in tasks
-        if task["Due Date"] < date.today()
-    )
-
-
-    potential_conflicts = 0
-
-    for employee in employees:
-        assigned_hours_7_days = sum(
-            task["Hours"] for task in tasks
-            if task["Assigned To"] == employee["Name"]
-            and date.today() <= task["Due Date"]
-            <= date.today() + timedelta(days=7)
-        )
-
-        if assigned_hours_7_days > employee["Available Hours"]:
-            potential_conflicts += 1
+    # Get workload data from FastAPI
+    try:
+        workload_data = api_client.get_workloads()
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not load workload data: {error}")
+        st.stop()
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Employees", len(employees))
-    col2.metric("Active Tasks", active_tasks)
-    col3.metric("Potential Conflicts", potential_conflicts)
-    col4.metric("Overdue Tasks", overdue_tasks)
+
+    col1.metric("Total Employees", workload_data["total_employees"])
+    col2.metric("Active Tasks",workload_data["active_tasks"])
+    col3.metric("Employees with Conflicts", workload_data["employees_with_conflicts"])
+    col4.metric("Overdue Tasks", workload_data["overdue_tasks"])
 
     st.subheader("Employee Workload and Deadline Status")
 
- 
+    # Build the table using backend workload summaries
     workload_rows = []
 
-    for employee in employees:
-        name = employee["Name"]
-
-        assigned = [
-            task for task in tasks
-            if task["Assigned To"] == name
-        ]
-
-        due_7 = sum(
-            task["Hours"] for task in assigned
-            if date.today() <= task["Due Date"]
-            <= date.today() + timedelta(days=7)
-        )
-
-        due_14 = sum(
-            task["Hours"] for task in assigned
-            if date.today() + timedelta(days=7) < task["Due Date"]
-            <= date.today() + timedelta(days=14)
-        )
-
-        due_21 = sum(
-            task["Hours"] for task in assigned
-            if date.today() + timedelta(days=14) < task["Due Date"]
-            <= date.today() + timedelta(days=21)
-        )
-
+    for employee in workload_data["employees"]:
         workload_rows.append({
-            "Employee": name,
-            "Available hrs/wk": employee["Available Hours"],
-            "Assigned hrs": sum(t["Hours"] for t in assigned),
-            "Due 1-7 days": due_7,
-            "Due 8-14 days": due_14,
-            "Due 15-21 days": due_21
+            "Employee": employee["name"],
+            "Available hrs/wk": employee["available_hours"],
+            "Assigned hrs": employee["outstanding_hours"],
+            "This week": employee["this_week_hours"],
+            "Next week": employee["next_week_hours"],
+            "Later": employee["later_hours"]
         })
 
     st.dataframe(
@@ -157,117 +146,425 @@ with dashboard:
         hide_index=True
     )
 
-    # Check for potential workload overloads
+    st.caption(
+        "Task hours are grouped by due date (Monday–Sunday). "
+        "Overdue work is included in This week."
+    )
 
+    # Display deadline and capacity warnings from the backend
     st.subheader("Workload Warnings")
 
     warning_count = 0
 
-    for row in workload_rows:
-        if row["Due 1-7 days"] > row["Available hrs/wk"]:
-            st.warning(
-                f'{row["Employee"]} may be overloaded: '
-                f'{row["Due 1-7 days"]} hours due in the next '
-                f'7 days, but only '
-                f'{row["Available hrs/wk"]} hours available per week.'
-            )
+    for employee in workload_data["employees"]:
+        for conflict in employee["deadline_conflicts"]:
+
+            if conflict["type"] == "overdue":
+                st.warning(
+                    f'{employee["name"]} has an overdue task '
+                    f'due {conflict["deadline"]} '
+                    f'({conflict["required_hours"]:g} hours).'
+                )
+
+            elif conflict["type"] == "capacity":
+                st.warning(
+                    f'{employee["name"]} may not have enough time '
+                    f'to complete work due by {conflict["deadline"]}: '
+                    f'{conflict["required_hours"]:g} hours required, '
+                    f'{conflict["available_hours"]:g} hours available '
+                    f'({conflict["shortfall_hours"]:g} hours short).'
+                )
+
             warning_count += 1
 
     if warning_count == 0:
-        st.success("No potential workload overloads detected.")
+        st.success("No deadline or capacity conflicts detected.")
 
+    # UPCOMING TASK DEADLINES
+    st.subheader("Upcoming Task Deadlines")
 
-    st.caption(
-        "Sample workload display. Final capacity and deadline "
-        "conflict calculations will come from the backend."
-    )
+    # Get active tasks already sorted by deadline by the backend
+    upcoming_tasks = workload_data["upcoming_deadlines"]
 
+    # Look up employee names using the workload summaries
+    employee_lookup = {
+        employee["employee_id"]: employee["name"]
+        for employee in workload_data["employees"]
+    }
 
-    left, right = st.columns(2)
+    # Format backend task records for display
+    upcoming_rows = []
 
-    with left:
-        st.subheader("Upcoming Task Deadlines")
+    for task in upcoming_tasks:
+        employee_id = task["employee_id"]
 
-        upcoming = sorted(tasks, key=lambda task: task["Due Date"])
+        assigned_to = (
+            employee_lookup.get(employee_id, "Unknown")
+            if employee_id is not None
+            else "Unassigned"
+        )
 
-        for task in upcoming:
-            if task["Assigned To"] == "Unassigned":
-                st.warning(
-                    f'Unassigned task: {task["Task"]}'
-                )
+        upcoming_rows.append({
+            "Task": task["title"],
+            "Hours": task["estimated_hours"],
+            "Due Date": task["deadline"],
+            "Priority": task["priority"],
+            "Difficulty": task["difficulty"],
+            "Assigned To": assigned_to
+        })
 
+    # Display the first five tasks
+    if upcoming_rows:
         st.dataframe(
-            pd.DataFrame(upcoming),
+            pd.DataFrame(upcoming_rows[:5]),
             use_container_width=True,
             hide_index=True
         )
 
-    with right:
-        st.subheader("AI Task Recommendations")
+        # Show remaining tasks when more than five exist
+        remaining = upcoming_rows[5:]
 
-        if st.button("Generate AI Recommendations"):
+        if remaining:
+            count = len(remaining)
+            label = f"Show {count} remaining {'task' if count == 1 else 'tasks'}"
 
-            employee_info = ""
-
-            for employee in st.session_state.employees:
-                assigned_hours = 0
-
-                for task in st.session_state.tasks:
-                    if task["Assigned To"] == employee["Name"]:
-                        if task["Status"] == "Active":
-                            assigned_hours += task["Hours"]
-
-                employee_info += (
-                    f"Employee ID: {employee['Employee ID']}\n"
-                    f"Name: {employee['Name']}\n"
-                    f"Experience: {employee['Experience']}\n"
-                    f"Available hours: {employee['Available Hours']}\n"
-                    f"Existing workload: {assigned_hours}\n\n"
+            with st.expander(label):
+                st.dataframe(
+                    pd.DataFrame(remaining),
+                    use_container_width=True,
+                    hide_index=True
                 )
+    else:
+        st.info("No active tasks.")
 
-            task_info = ""
+    # AI TASK RECOMMENDATIONS
+    st.subheader("AI Task Recommendations")
 
-            for task in st.session_state.tasks:
-                if task["Status"] == "Active":
-                    task_info += (
-                        f"Task ID: {task['Task ID']}\n"
-                        f"Task: {task['Task']}\n"
-                        f"Priority: {task['Priority']}\n"
-                        f"Difficulty: {task['Difficulty']}\n"
-                        f"Deadline: {task['Due Date']}\n"
-                        f"Estimated hours: {task['Hours']}\n\n"
-                    )
+    if "selected_recommendations" not in st.session_state:
+        st.session_state.selected_recommendations = []
 
-            task_information = employee_info + task_info
+    if st.button("Generate AI Recommendations"):
+        try:
+            with st.spinner("Generating recommendations..."):
+                result = api_client.generate_recommendations()
+
+            st.session_state.recommendations = result["recommendations"]
+            st.session_state.selected_recommendations = []
+
+        except requests.exceptions.RequestException as error:
+            if error.response is not None:
+                try:
+                    detail = error.response.json().get("detail", str(error))
+                except ValueError:
+                    detail = str(error)
+
+                st.error(f"Could not generate recommendations: {detail}")
+            else:
+                st.error(f"Could not connect to the backend: {error}")
+
+    
+    if "recommendations" in st.session_state:
+
+        employees = api_client.get_employees()
+        db_tasks = api_client.get_tasks()
+
+        employee_lookup = {
+            employee["employee_id"]: employee
+            for employee in employees
+        }
+
+        task_lookup = {
+            task["task_id"]: task
+            for task in db_tasks
+        }
+
+        for recommendation in st.session_state.recommendations:
+
+            task_id = recommendation["task_id"]
+            employee_id = recommendation["employee_id"]
+
+            task = task_lookup.get(task_id)
+            employee = employee_lookup.get(employee_id)
+
+            if task is None or employee is None:
+                st.error("Could not find the task or employee.")
+                continue
+
+            is_selected = any(
+                selected["task_id"] == task_id
+                for selected in st.session_state.selected_recommendations
+            )
+
+            # Calculate the proposed assignment's impact
+            preview = None
 
             try:
-                with st.spinner("Generating recommendations..."):
-                    result = generate_task_recommendations(task_information)
+                preview = api_client.preview_recommendation({
+                    "recommendation": {
+                        "task_id": task_id,
+                        "employee_id": employee_id,
+                        "reason": recommendation["reason"]
+                    },
+                    "selected_recommendations":
+                        st.session_state.selected_recommendations
+                })
 
-                st.session_state.recommendations = result["recommendations"]
+            except requests.exceptions.RequestException:
+                st.error(
+                    f"Could not calculate assignment impact "
+                    f"for {task['title']}."
+                )
 
-            except Exception as error:
-                st.error(f"Could not generate recommendations: {error}")
+            with st.container(border=True):
 
-        if "recommendations" in st.session_state:
-            for recommendation in st.session_state.recommendations:
+                title_col, status_col = st.columns([4, 1])
 
-                employee_name = ""
-                task_name = ""
+                with title_col:
+                    st.markdown(f"**{task['title']}**")
 
-                for employee in st.session_state.employees:
-                    if employee["Employee ID"] == recommendation["employee_id"]:
-                        employee_name = employee["Name"]
+                with status_col:
+                    if is_selected:
+                        st.markdown(
+                            "<div style='text-align: right; color: #2563eb; "
+                            "font-weight: 600;'>● Selected</div>",
+                            unsafe_allow_html=True
+                        )
 
-                for task in st.session_state.tasks:
-                    if task["Task ID"] == recommendation["task_id"]:
-                        task_name = task["Task"]
+                left_col, right_col = st.columns([3, 2])
 
-                if employee_name and task_name:
-                    st.write("---")
-                    st.write("**Task:**", task_name)
-                    st.write("**Recommended Employee:**", employee_name)
-                    st.write("**Reason:**", recommendation["reason"])
+                # LEFT: Task and recommendation details
+                with left_col:
+
+                    st.caption(
+                        f'{task["estimated_hours"]} hrs · '
+                        f'{task["priority"]} priority · '
+                        f'{task["difficulty"]} · '
+                        f'Due {task["deadline"]}'
+                    )
+
+                    current_id = task.get("employee_id")
+
+                    if current_id is None:
+                        current_name = "Unassigned"
+                    else:
+                        current_employee = employee_lookup.get(current_id)
+                        current_name = (
+                            current_employee["name"]
+                            if current_employee
+                            else "Unknown"
+                        )
+
+                    st.markdown(
+                        f'**{current_name} → {employee["name"]}**'
+                    )
+
+                    st.caption(recommendation["reason"])
+
+                # RIGHT: Validation and assignment impact
+                with right_col:
+
+                    st.markdown("**Assignment Impact**")
+
+                    errors = recommendation.get("errors", [])
+                    warnings = recommendation.get("warnings", [])
+
+                    if errors:
+                        for error in errors:
+                            st.markdown(f"❌ {error}")
+
+                    if warnings:
+                        for warning in warnings:
+                            st.markdown(f"⚠️ {warning}")
+
+                    if not errors and not warnings:
+                        st.markdown("✅ Initial validation passed")
+
+                    # Dynamic capacity and fairness feedback
+                    if preview is not None:
+
+                        capacity_errors = preview.get(
+                            "capacity_errors", {}
+                        )
+
+                        fairness_warnings = preview.get(
+                            "fairness_warnings", []
+                        )
+
+                        for employee_errors in capacity_errors.values():
+                            for error in employee_errors:
+                                st.markdown(f"❌ {error}")
+
+                        for warning in compact_fairness_warnings(fairness_warnings):
+                            st.markdown(f"⚠️ {warning}")
+
+                        if not capacity_errors and not fairness_warnings:
+                            if preview.get("valid", False):
+                                st.markdown(
+                                    "✅ No capacity or fairness issues"
+                                )
+
+                    if is_selected:
+
+                        # Undo a temporary selection
+                        if st.button(
+                            "Undo",
+                            key=f"undo_{task_id}",
+                            type="secondary"
+                        ):
+
+                            st.session_state.selected_recommendations = [
+                                selected
+                                for selected in st.session_state.selected_recommendations
+                                if selected["task_id"] != task_id
+                            ]
+
+                            st.rerun()
+
+                    else:
+
+                        # Apply a recommendation temporarily
+                        if st.button(
+                            "Apply",
+                            key=f"apply_{task_id}",
+                            type="secondary",
+                            disabled=not recommendation.get("valid", False)
+                        ):
+
+                            st.session_state.selected_recommendations.append({
+                                "task_id": task_id,
+                                "employee_id": employee_id,
+                                "reason": recommendation["reason"]
+                            })
+
+                            st.rerun()
+
+        # SELECTED CHANGES SUMMARY
+        selected = st.session_state.selected_recommendations
+
+        if selected:
+            st.markdown("#### Selected Changes")
+
+            for change in selected:
+                selected_task = task_lookup.get(change["task_id"])
+                selected_employee = employee_lookup.get(change["employee_id"])
+
+                if selected_task and selected_employee:
+                    st.markdown(
+                        f':blue[✓] **{selected_task["title"]}** → '
+                        f'{selected_employee["name"]}'
+                    )
+
+            # Evaluate all selected changes together
+            evaluation = None
+
+            try:
+                evaluation = api_client.evaluate_recommendations({
+                    "selected_recommendations": selected
+                })
+
+            except requests.exceptions.RequestException as error:
+                st.error(f"Could not evaluate selected changes: {error}")
+
+            # Display combined evaluation results
+            if evaluation is not None:
+
+                capacity_errors = evaluation.get(
+                    "capacity_errors", {}
+                )
+
+                fairness_warnings = evaluation.get(
+                    "fairness_warnings", []
+                )
+
+                # Show blocking capacity errors
+                all_capacity_errors = [
+                    error
+                    for employee_errors in capacity_errors.values()
+                    for error in employee_errors
+                ]
+
+                if all_capacity_errors:
+                    count = len(all_capacity_errors)
+
+                    st.markdown(
+                        f"❌ {count} blocking capacity "
+                        f"{'conflict' if count == 1 else 'conflicts'}"
+                    )
+
+                    for error in all_capacity_errors:
+                        st.caption(error)
+
+                # Count grouped fairness warnings
+                compact_warnings = compact_fairness_warnings(fairness_warnings)
+
+                if compact_warnings:
+                    count = len(compact_warnings)
+
+                    st.markdown(
+                        f"⚠️ {count} fairness "
+                        f"{'warning' if count == 1 else 'warnings'}"
+                    )
+
+                if evaluation.get("can_commit", False):
+                    st.markdown("✅ Selected changes are ready for approval.")
+                else:
+                    st.markdown(
+                        "❌ Selected changes cannot be approved "
+                        "until blocking issues are resolved."
+                    )
+
+            # Final approval
+            can_approve = (
+                evaluation is not None
+                and evaluation.get("can_commit", False)
+            )
+
+            st.markdown("""
+                <style>
+                .st-key-approve_selected button:not(:disabled) {
+                    background-color: #2563eb;
+                    color: white;
+                    border-color: #2563eb;
+                }
+
+                .st-key-approve_selected button:not(:disabled):hover {
+                    background-color: #1d4ed8;
+                    border-color: #1d4ed8;
+                    color: white;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            if st.button(
+                "Approve Selected Changes",
+                key="approve_selected",
+                type="secondary",
+                disabled=not can_approve
+            ):
+                try:
+                    result = api_client.approve_recommendations({
+                        "selected_recommendations": selected
+                    })
+
+                    # Clear temporary selections and old recommendations
+                    st.session_state.selected_recommendations = []
+                    st.session_state.recommendations = []
+
+                    st.success(result["message"])
+                    st.rerun()
+
+                except requests.exceptions.RequestException as error:
+                    st.error(f"Could not approve changes: {error}")
+
+            st.caption(
+                f"{len(selected)} recommendation(s) selected. "
+                "No database changes have been saved."
+            )
+
+
+
+
+
 
 # EMPLOYEES
 with employees_tab:

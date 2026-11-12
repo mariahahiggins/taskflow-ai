@@ -1,5 +1,4 @@
-from database import add_employee, add_task, get_employees, get_tasks
-
+from backend.database import add_employee, add_task, get_employees, get_tasks
 
 def seed_database():
     # Avoid inserting duplicate data
@@ -13,7 +12,7 @@ def seed_database():
     alex_id = add_employee("Alex", 20, "Junior")
 
     # Create sample tasks
-    add_task("Prepare project report", 12, "2026-11-13",
+    add_task("Prepare project report", 12, "2026-11-20",
              "High", "Medium", sarah_id)
 
     add_task("Review documentation", 6, "2026-11-20",
