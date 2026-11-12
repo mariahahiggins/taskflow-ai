@@ -63,7 +63,7 @@ Rules:
 - Recommend assignments only for task IDs listed in eligible_task_ids.
 - Other tasks are provided for workload context only.
 - Prioritize assigning currently unassigned tasks.
-- Recommend reassignment of an already assigned task onlywhen there is a meaningful workload, deadline, or fairness benefit.
+- Recommend reassignment of an already assigned task only when there is a meaningful workload, deadline, or fairness benefit.
 - Don't recommend assigning a task to the employee who is already assigned to it.
 - It is acceptable to return fewer recommendations than eligible tasks, or an empty list if no changes are needed.
 - Recommend each task at most once.
