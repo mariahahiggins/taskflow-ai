@@ -113,7 +113,7 @@ with dashboard:
 
     # Get workload data from FastAPI
     try:
-        workload_data = api_client.get_workloads()
+        workload_data = get_workloads()
     except requests.exceptions.RequestException as error:
         st.error(f"Could not load workload data: {error}")
         st.stop()
@@ -246,7 +246,7 @@ with dashboard:
     if st.button("Generate AI Recommendations"):
         try:
             with st.spinner("Generating recommendations..."):
-                result = api_client.generate_recommendations()
+                result = generate_recommendations()
 
             st.session_state.recommendations = result["recommendations"]
             st.session_state.selected_recommendations = []
@@ -265,8 +265,8 @@ with dashboard:
     
     if "recommendations" in st.session_state:
 
-        employees = api_client.get_employees()
-        db_tasks = api_client.get_tasks()
+        employees = get_employees()
+        db_tasks = get_tasks()
 
         employee_lookup = {
             employee["employee_id"]: employee
@@ -299,7 +299,7 @@ with dashboard:
             preview = None
 
             try:
-                preview = api_client.preview_recommendation({
+                preview = preview_recommendation({
                     "recommendation": {
                         "task_id": task_id,
                         "employee_id": employee_id,
@@ -458,7 +458,7 @@ with dashboard:
             evaluation = None
 
             try:
-                evaluation = api_client.evaluate_recommendations({
+                evaluation = evaluate_recommendations({
                     "selected_recommendations": selected
                 })
 
@@ -542,7 +542,7 @@ with dashboard:
                 disabled=not can_approve
             ):
                 try:
-                    result = api_client.approve_recommendations({
+                    result = approve_recommendations({
                         "selected_recommendations": selected
                     })
 
