@@ -1,3 +1,6 @@
+# Prefer wheels for dependencies such as cryptography on Intel Macs.
+--prefer-binary
+
 # Backend and Gemini
 fastapi==0.162.0
 uvicorn==0.54.0
