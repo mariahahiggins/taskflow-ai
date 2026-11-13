@@ -1,4 +1,0 @@
--r requirements-api.txt
-httpx2==2.16.0
-google-genai
-requests
