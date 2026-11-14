@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
+from datetime import date
 
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -12,6 +13,7 @@ def format_task_information(employees, tasks, workload_summary, eligible_task_id
     """Format database and workload data for Gemini."""
 
     return json.dumps({
+        "today": date.today().isoformat(),
         "employees": employees,
         "tasks": tasks,
         "workload_summary": workload_summary,
@@ -45,17 +47,26 @@ Rules:
 - Mid employees can get Easy and Medium tasks.
 - Mid employees can get Hard tasks, but this should be noted in the reason.
 - Senior employees can get any task.
-- Consider each employee's existing assignments and available working hours.
-- Available hours represent weekly capacity, spread across Monday-Friday.
-- Tasks may span multiple weeks if their deadlines allow enough working hours.
+- Calculate each employee's daily capacity as available_hours divided by 5.
+- Count only Monday-Friday working days from the current date through each task deadline, including both dates.
+- For each proposed assignment, consider all existing active tasks assigned to the employee, including their estimated hours and deadlines.
+- Check cumulative required hours against available working hours at every relevant deadline, not just the proposed task's deadline.
+- Do not assume that unused weekly capacity is available before an approaching deadline.
+- Tasks may span multiple weeks when sufficient working days remain.
 - Active overdue tasks are eligible for assignment or reassignment.
 - Treat overdue tasks as urgent, but evaluate their capacity against the remaining workweek through Friday, not their original deadline or today alone.
 - Account for other assigned tasks when evaluating whether an employee has enough capacity.
 - Do not recommend assignments that worsen existing deadline capacity conflicts.
 - Consider task priority and distribute difficult and high-priority work fairly.
 - Recommend only assignments that are feasible based on experience and capacity.
+- Always use employee names rather than employee IDs when explaining recommendations in the reason field.
 - Recommend assignments only for task IDs listed in eligible_task_ids.
 - Other tasks are provided for workload context only.
+- Prioritize assigning currently unassigned tasks.
+- Recommend reassignment of an already assigned task only when there is a meaningful workload, deadline, or fairness benefit.
+- Don't recommend assigning a task to the employee who is already assigned to it.
+- It is acceptable to return fewer recommendations than eligible tasks, or an empty list if no changes are needed.
+- Recommend each task at most once.
 
 Do not recommend someone who does not have enough available
 hours or the experience needed for the task.

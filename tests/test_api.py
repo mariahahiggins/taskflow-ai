@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -263,6 +263,9 @@ class EmployeeTaskAPITests(unittest.TestCase):
                 "type": "capacity",
             },
         ])
+        self.assertEqual(summary["this_week_hours"], 5)
+        self.assertEqual(summary["next_week_hours"], 0)
+        self.assertEqual(summary["later_hours"], 0)
 
     def test_workload_requires_a_valid_existing_employee(self):
         missing = self.client.get("/employees/999/workload")
@@ -276,8 +279,14 @@ class EmployeeTaskAPITests(unittest.TestCase):
         zero_capacity_id = self.create_employee(
             name="Riley Chen", available_hours=0
         )["employee_id"]
+        today = date(2026, 11, 6)
+        days_until_next_monday = 7 - today.weekday()
+        next_monday = today + timedelta(days=days_until_next_monday)
+
         assigned = self.create_task(
-            employee_id=assigned_id, deadline="2026-11-10", difficulty="Hard"
+            employee_id=assigned_id,
+            deadline=next_monday.isoformat(),
+            difficulty="Hard"
         )
         unassigned = self.create_task(estimated_hours=4, difficulty="Hard")
         self.complete_task(self.create_task(employee_id=idle_id, difficulty="Hard"))
@@ -287,13 +296,16 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         summary = response.json()
         self.assertEqual(summary["total_employees"], 3)
-        self.assertEqual(summary["active_tasks"], 1)
+        self.assertEqual(summary["active_tasks"], 2)
         self.assertEqual(summary["unassigned_tasks"], 1)
         self.assertEqual(summary["outstanding_hours"], 10)
-        self.assertEqual(summary["overdue_tasks"], 0)
+        self.assertEqual(summary["overdue_tasks"], 1)
         self.assertEqual(summary["total_deadline_conflicts"], 0)
         self.assertEqual(summary["upcoming_deadlines"], [unassigned, assigned])
         employees = {item["employee_id"]: item for item in summary["employees"]}
+        self.assertEqual(employees[assigned_id]["this_week_hours"], 0)
+        self.assertEqual(employees[assigned_id]["next_week_hours"], 10)
+        self.assertEqual(employees[assigned_id]["later_hours"], 0)
         self.assertIsNone(employees[zero_capacity_id]["one_week_utilization"])
         self.assertIsNone(employees[zero_capacity_id]["two_week_utilization"])
         fairness = summary["fairness"]
