@@ -149,10 +149,10 @@ The example below shows the **response structure**. Empty collections are placeh
 **Team totals:**
 
 - `total_employees`: number of employee records.
-- `active_tasks`: active tasks assigned to a known employee; **does not include unassigned tasks**.
+- `active_tasks`: total number of active tasks, including both assigned and unassigned tasks.
 - `unassigned_tasks`: active tasks with `employee_id: null`.
 - `outstanding_hours`: sum of assigned employees' outstanding hours.
-- `overdue_tasks`: overdue active tasks assigned to employees; unassigned overdue tasks are not included in this total.
+- `overdue_tasks`: total number of overdue active tasks, including both assigned and unassigned tasks.
 - `employees_with_conflicts`: employees with one or more deadline conflicts.
 - `total_deadline_conflicts`: sum of all individual deadline conflict entries.
 - `employees`: array of individual employee workload summaries.
@@ -337,11 +337,11 @@ All four endpoints require an initialized database. Gemini is contacted by `/rec
 - Fetch `GET /employees` and `GET /tasks` to populate forms and lists.
 - Fetch `GET /workloads` for team dashboard metrics, fairness displays, employee workload cards, and deadline warnings.
 - Fetch `GET /employees/{id}/workload` for a selected employee's detailed view.
-- Display `active_tasks` as **assigned active tasks**, or combine it with `unassigned_tasks` when a total active-task count is needed.
+- Display `active_tasks` as the total number of active tasks, including unassigned tasks. Use `unassigned_tasks` separately when showing how many active tasks still need an assignment.
 - Handle nullable utilization and spread fields in the UI.
 - **Recommendation workflow:** Call `POST /recommendations` to generate suggestions; display reasons, validation errors, and warnings. Let managers select/deselect suggestions. The recommendation UI does not edit the recommended employee; managers can use the existing task-editing interface for manual reassignment.
 - Call `POST /recommendations/preview` for an individual recommendation's incremental capacity/fairness impact, and `POST /recommendations/evaluate` for a final review of all selected assignments. Disable approval when `can_commit` is false.
 - Show a **pre-approval summary** with task names, employee names, validation results, and capacity/fairness messages. The API returns IDs; resolve names from employee and task records.
-- After `POST /recommendations/approve` succeeds, show a **confirmation summary** using `updated_task_ids` and the selected recommendations. Refresh `GET /tasks` and `GET /workloads` to display the saved assignments and updated metrics.
+- After `POST /recommendations/approve` succeeds, refresh the task and workload data to display the saved assignments and updated metrics. The API returns `updated_task_ids` to identify the tasks that were updated.
 - Handle HTTP errors and display useful feedback; in particular, a recommendation can become invalid between evaluation and approval.
 - Consult FastAPI's `/docs` page for the exact current Pydantic request schemas, HTTP response codes, and validation errors as the implementation evolves.
