@@ -82,6 +82,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
 
     def test_create_list_and_retrieve_employee(self):
         employee = self.create_employee(name=" Alex Johnson ")
+        self.assertEqual(employee["status"], "Active")
         self.assertEqual(employee["name"], "Alex Johnson")
         self.assertGreater(employee["employee_id"], 0)
         self.assertEqual(
@@ -91,10 +92,59 @@ class EmployeeTaskAPITests(unittest.TestCase):
 
     def test_update_employee_and_allow_zero_availability(self):
         employee = self.create_employee()
-        values = {**EMPLOYEE, "available_hours": 0, "experience_level": "Senior"}
+        values = {**EMPLOYEE, "available_hours": 0, "experience_level": "Senior", "status": "Active"}
         response = self.client.put(f'/employees/{employee["employee_id"]}', json=values)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {**values, "employee_id": employee["employee_id"]})
+
+    def test_deactivate_employee_unassigns_only_active_tasks(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        active_task = self.create_task(employee_id=employee_id)
+        completed_task = self.complete_task(self.create_task(title="Finished report", employee_id=employee_id))
+        response = self.client.put(f"/employees/{employee_id}", json={**EMPLOYEE, "status": "Inactive"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "Inactive")
+        active = self.client.get(f'/tasks/{active_task["task_id"]}').json()
+        completed = self.client.get(f'/tasks/{completed_task["task_id"]}').json()
+        self.assertIsNone(active["employee_id"])
+        self.assertEqual(completed["employee_id"], employee_id)
+
+    def test_reactivate_employee_does_not_restore_assignments(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        task = self.create_task(employee_id=employee_id)
+        self.client.put(f"/employees/{employee_id}", json={**EMPLOYEE, "status": "Inactive"})
+        response = self.client.put(f"/employees/{employee_id}", json={**EMPLOYEE, "status": "Active"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "Active")
+        saved_task = self.client.get(f'/tasks/{task["task_id"]}').json()
+        self.assertIsNone(saved_task["employee_id"])
+
+    def test_inactive_employee_cannot_receive_active_tasks(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        response = self.client.put(f"/employees/{employee_id}", json={**EMPLOYEE, "status": "Inactive"})
+        self.assertEqual(response.status_code, 200, response.text)
+        create_response = self.client.post("/tasks", json={**TASK, "employee_id": employee_id})
+        self.assertEqual(create_response.status_code, 400)
+        task = self.create_task()
+        update_response = self.client.put(f'/tasks/{task["task_id"]}', json={**TASK, "status": "Active", "employee_id": employee_id})
+        self.assertEqual(update_response.status_code, 400)
+        saved_task = self.client.get(f'/tasks/{task["task_id"]}').json()
+        self.assertIsNone(saved_task["employee_id"])
+
+    def test_inactive_employee_remains_accessible(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        response = self.client.put(f"/employees/{employee_id}", json={**EMPLOYEE, "status": "Inactive"})
+        self.assertEqual(response.status_code, 200, response.text)
+        retrieved = self.client.get(f"/employees/{employee_id}")
+        self.assertEqual(retrieved.status_code, 200)
+        self.assertEqual(retrieved.json()["status"], "Inactive")
+        employees = self.client.get("/employees")
+        self.assertEqual(employees.status_code, 200)
+        self.assertIn(retrieved.json(), employees.json())
 
     def test_reject_bad_employee_input_without_writing(self):
         cases = [
@@ -140,7 +190,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
     def test_reject_unknown_assignment_without_saving_task(self):
         response = self.client.post("/tasks", json={**TASK, "employee_id": 999})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "The assigned employee does not exist.")
+        self.assertEqual(response.json()["detail"], "Employee does not exist.")
         self.assertEqual(self.client.get("/tasks").json(), [])
 
     def test_reject_bad_task_input_without_writing(self):
@@ -195,7 +245,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(self.client.get(task_path).json(), task)
 
     def test_update_missing_records_does_not_create_them(self):
-        self.assertEqual(self.client.put("/employees/999", json=EMPLOYEE).status_code, 404)
+        self.assertEqual(self.client.put("/employees/999", json={**EMPLOYEE, "status": "Active"}).status_code, 404)
         values = {**TASK, "status": "Active", "employee_id": None}
         self.assertEqual(self.client.put("/tasks/999", json=values).status_code, 404)
         self.assertEqual(self.client.get("/employees").json(), [])

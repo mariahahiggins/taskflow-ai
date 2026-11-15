@@ -12,9 +12,14 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 def format_task_information(employees, tasks, workload_summary, eligible_task_ids):
     """Format database and workload data for Gemini."""
 
+    active_employees = [
+        employee for employee in employees
+        if employee.get("status", "Active") == "Active"
+    ]
+
     return json.dumps({
         "today": date.today().isoformat(),
-        "employees": employees,
+        "employees": active_employees,
         "tasks": tasks,
         "workload_summary": workload_summary,
         "eligible_task_ids": eligible_task_ids
@@ -41,6 +46,7 @@ task difficulty, and deadlines.
 
 Rules:
 - Only recommend Active tasks. Never recommend Completed tasks.
+- Only recommend employees whose status is Active. Never assign tasks to Inactive employees
 - Junior employees should get Easy tasks.
 - Junior employees can get Medium tasks, but this should be noted in the reason.
 - Junior employees should not get Hard tasks.
