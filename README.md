@@ -115,7 +115,7 @@ All 83 requests completed successfully. Local backend operations averaged under 
 
 These results represent preliminary performance measurements from sequential requests in a local development environment using sample data. They do not establish performance under concurrent users or production workloads.
 
-To reproduce the benchmark, start FastAPI, configure Gemini, and run `python benchmark.py` from the repository root. The evaluation test uses a sample task and employee ID, which may need to be updated to match the current database.
+To reproduce the benchmark, start FastAPI, configure Gemini, and run `python benchmarks/benchmark.py` from the repository root. The evaluation test uses a sample task and employee ID, which may need to be updated to match the current database.
 
 The benchmark sends requests to the local API and does not approve or persist task assignments. Gemini generation requests consume API quota.
 
