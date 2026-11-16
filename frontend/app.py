@@ -299,25 +299,26 @@ with dashboard:
                 for selected in st.session_state.selected_recommendations
             )
 
-            # Calculate the proposed assignment's impact
+            # Calculate impact only for recommendations not yet selected
             preview = None
 
-            try:
-                preview = preview_recommendation({
-                    "recommendation": {
-                        "task_id": task_id,
-                        "employee_id": employee_id,
-                        "reason": recommendation["reason"]
-                    },
-                    "selected_recommendations":
-                        st.session_state.selected_recommendations
-                })
+            if not is_selected:
+                try:
+                    preview = preview_recommendation({
+                        "recommendation": {
+                            "task_id": task_id,
+                            "employee_id": employee_id,
+                            "reason": recommendation["reason"]
+                        },
+                        "selected_recommendations":
+                            st.session_state.selected_recommendations
+                    })
 
-            except requests.exceptions.RequestException:
-                st.error(
-                    f"Could not calculate assignment impact "
-                    f"for {task['title']}."
-                )
+                except requests.exceptions.RequestException:
+                    st.error(
+                        f"Could not calculate assignment impact "
+                        f"for {task['title']}."
+                    )
 
             with st.container(border=True):
 
@@ -406,6 +407,9 @@ with dashboard:
                                 st.markdown(
                                     "✅ No capacity or fairness issues"
                                 )
+                                
+                    if is_selected:
+                        st.caption("Included in Selected Changes evaluation.")
 
                     if is_selected:
 

@@ -236,6 +236,8 @@ def generate_recommendations():
         ) from exc
     
     except genai_errors.APIError as exc:
+        print(f"GEMINI API ERROR: {type(exc).__name__}: {exc}", flush=True)
+
         raise HTTPException(
             status_code=502,
             detail="Gemini API request failed."

@@ -34,7 +34,8 @@ class TestFormatTaskInformation(unittest.TestCase):
         )
         self.assertEqual(len(data["tasks"]), 2)
         self.assertEqual(data["eligible_task_ids"], [101])
-        self.assertEqual(data["workload_summary"], {"total_employees": 2})
+        self.assertEqual(data["employee_workloads"], [])
+        self.assertEqual(data["fairness"], {})
         self.assertEqual(data["today"], "2026-11-09")
 
     def test_all_employees_inactive(self):
