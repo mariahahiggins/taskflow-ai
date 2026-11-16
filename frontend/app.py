@@ -162,10 +162,12 @@ with dashboard:
         for conflict in employee["deadline_conflicts"]:
 
             if conflict["type"] == "overdue":
+                task_title = conflict.get("task_title") or "Unnamed task"
                 st.warning(
-                    f'{employee["name"]} has an overdue task '
-                    f'due {conflict["deadline"]} '
-                    f'({conflict["required_hours"]:g} hours).'
+                    f'{employee["name"]} has an overdue task: '
+                    f'{task_title} '
+                    f'(due {conflict["deadline"]}, '
+                    f'{conflict["required_hours"]:g} hours).'
                 )
 
             elif conflict["type"] == "capacity":
@@ -814,7 +816,13 @@ with tasks_tab:
                     employee_names = ["Unassigned"] + [
                         employee["Name"]
                         for employee in st.session_state.employees
+                        if employee["Status"] == "Active"
                     ]
+
+                    current_assignee = task_to_edit["Assigned To"]
+
+                    if current_assignee not in employee_names:
+                        employee_names.append(current_assignee)
 
                     edited_employee = st.selectbox(
                         "Assigned To",
@@ -891,6 +899,7 @@ with tasks_tab:
 
             names = ["Unassigned"] + [
                 e["Name"] for e in st.session_state.employees
+                if e["Status"] == "Active"
             ]
             assigned_to = st.selectbox("Assign Employee", names)
 

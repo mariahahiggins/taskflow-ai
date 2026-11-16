@@ -70,6 +70,7 @@ class DeadlineConflictResponse(APIModel):
     available_hours: float = Field(ge=0)
     shortfall_hours: float = Field(gt=0)
     type: Literal["overdue", "capacity"]
+    task_title: str | None = None
 
 
 class EmployeeWorkloadResponse(EmployeeResponse):

@@ -304,6 +304,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
                 "available_hours": 0,
                 "shortfall_hours": 2,
                 "type": "overdue",
+                "task_title": "Prepare report"
             },
             {
                 "deadline": "2026-11-06",
@@ -311,6 +312,7 @@ class EmployeeTaskAPITests(unittest.TestCase):
                 "available_hours": 1,
                 "shortfall_hours": 4,
                 "type": "capacity",
+                "task_title": None
             },
         ])
         self.assertEqual(summary["this_week_hours"], 5)

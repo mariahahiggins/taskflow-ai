@@ -148,6 +148,7 @@ def check_deadline_conflicts(employee, tasks, today):
 
         if deadline < today:
             conflicts.append({
+                "task_title": task.get("title"),
                 "deadline": task["deadline"],
                 "required_hours": task["estimated_hours"],
                 "available_hours": 0,
