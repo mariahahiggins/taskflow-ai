@@ -1,8 +1,9 @@
 from backend import workload
 
-"""Find the employee and task referenced by an AI recommendation."""
+
 def find_assignment_records(employees, tasks, task_id, employee_id):
-    
+    """Find the employee and task referenced by an AI recommendation."""
+
     employee = next(
         (e for e in employees if e["employee_id"] == employee_id),
         None,
@@ -15,8 +16,9 @@ def find_assignment_records(employees, tasks, task_id, employee_id):
 
     return employee, task
 
-"""Check that an assignment references a valid employee and active task."""
+
 def validate_assignment_records(employees, tasks, task_id, employee_id):
+    """Check that an assignment references a valid employee and active task."""
 
     employee, task = find_assignment_records(
         employees, tasks, task_id, employee_id
@@ -26,6 +28,8 @@ def validate_assignment_records(employees, tasks, task_id, employee_id):
 
     if employee is None:
         errors.append("Employee does not exist.")
+    elif employee.get("status", "Active") != "Active":
+        errors.append("Cannot assign a task to an inactive employee.")
 
     if task is None:
         errors.append("Task does not exist.")
@@ -34,8 +38,9 @@ def validate_assignment_records(employees, tasks, task_id, employee_id):
 
     return errors
 
-"""Check whether employee experience matches task difficulty."""
+
 def validate_experience(employee, task):
+    """Check whether employee experience matches task difficulty."""
 
     errors = []
     warnings = []
@@ -61,12 +66,16 @@ def validate_experience(employee, task):
 
     return errors, warnings
 
-"""Find employees whose deadline capacity worsens after proposed assignments."""
+
 def validate_deadline_capacity(employees, tasks, proposed_tasks, today): 
+    """Find employees whose deadline capacity worsens after proposed assignments."""
 
     errors = {}
 
     for employee in employees:
+        if employee.get("status", "Active") != "Active":
+            continue
+
         employee_id = employee["employee_id"]
 
         current_tasks = [
@@ -116,8 +125,9 @@ def validate_deadline_capacity(employees, tasks, proposed_tasks, today):
 
     return errors
 
-"""Return warnings for fairness metrics that worsen."""
+
 def compare_fairness(before, after):
+    """Return warnings for fairness metrics that worsen."""
     
     metrics = {
         "one_week_utilization_spread": "One-week workload balance",
@@ -144,8 +154,9 @@ def compare_fairness(before, after):
 
     return warnings
 
-"""Return warnings if proposed assignments worsen team fairness."""
+
 def validate_fairness(employees, tasks, proposed_tasks, today):
+    """Return warnings if proposed assignments worsen team fairness."""
     
     before_summary = workload.get_team_workload_summary(employees, tasks, today)
 
@@ -156,8 +167,9 @@ def validate_fairness(employees, tasks, proposed_tasks, today):
         after_summary["fairness"]
     )
 
-"""Return task IDs appearing in more than one recommendation."""
+
 def find_duplicate_task_ids(recommendations):
+    """Return task IDs appearing in more than one recommendation."""
     
     seen = set()
     duplicates = set()
@@ -172,8 +184,9 @@ def find_duplicate_task_ids(recommendations):
 
     return duplicates
 
-"""Return a copy of tasks with multiple recommendations applied."""
+
 def simulate_recommendations(tasks, recommendations):
+    """Return a copy of tasks with multiple recommendations applied."""
 
     updated_tasks = [task.copy() for task in tasks]
 
@@ -188,8 +201,9 @@ def simulate_recommendations(tasks, recommendations):
 
     return updated_tasks
 
-"""Validate AI recommendations before manager approval."""
+
 def validate_recommendations(employees, tasks, recommendations):
+    """Validate AI recommendations before manager approval."""
     
     duplicates = find_duplicate_task_ids(recommendations)
     results = []
@@ -228,8 +242,9 @@ def validate_recommendations(employees, tasks, recommendations):
     }
 
 
-"""Evaluate selected assignments before committing changes."""
+
 def evaluate_selected_changes(employees, tasks, selected_recommendations, today):
+    """Evaluate selected assignments before committing changes."""
 
     validation = validate_recommendations(employees, tasks, selected_recommendations)
 
@@ -262,8 +277,9 @@ def evaluate_selected_changes(employees, tasks, selected_recommendations, today)
         )
     }
 
-"""Preview one recommendation against the manager's selected changes."""
+
 def evaluate_individual_recommendation(employees, tasks, recommendation, selected_recommendations, today):
+    """Preview one recommendation against the manager's selected changes."""
 
     validation = validate_recommendations(employees, tasks, [recommendation])["recommendations"][0]
 

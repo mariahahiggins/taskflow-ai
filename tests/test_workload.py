@@ -708,19 +708,22 @@ class TestTeamWorkloadSummary(unittest.TestCase):
                 "employee_id": 1,
                 "name": "Sarah",
                 "experience_level": "Senior",
-                "available_hours": 40
+                "available_hours": 40,
+                "status": "Active"
             },
             {
                 "employee_id": 2,
                 "name": "James",
                 "experience_level": "Mid",
-                "available_hours": 40
+                "available_hours": 40,
+                "status": "Active"
             },
             {
                 "employee_id": 3,
                 "name": "Alex",
                 "experience_level": "Junior",
-                "available_hours": 20
+                "available_hours": 20,
+                "status": "Active"
             }
         ]
 
@@ -909,6 +912,58 @@ class TestTeamWorkloadSummary(unittest.TestCase):
         ]
         result = get_team_workload_summary(self.employees, tasks, TODAY)
         self.assertAlmostEqual(result["outstanding_hours"], 10.25)
+
+
+    def test_inactive_employee_excluded_from_team_summary(self):
+        self.employees[1]["status"] = "Inactive"
+        result = get_team_workload_summary(self.employees, [], TODAY)
+        self.assertEqual(result["total_employees"], 2)
+        self.assertEqual(
+            [employee["employee_id"] for employee in result["employees"]],
+            [1, 3]
+        )
+
+    def test_inactive_employee_excluded_from_workload_totals(self):
+        self.employees[1]["status"] = "Inactive"
+        tasks = [
+            self.make_task(10, 3, employee_id=1),
+            self.make_task(20, 3, employee_id=2),
+            self.make_task(5, 3, employee_id=3)
+        ]
+        result = get_team_workload_summary(self.employees, tasks, TODAY)
+        self.assertEqual(result["total_employees"], 2)
+        self.assertEqual(result["outstanding_hours"], 15)
+        self.assertEqual(result["active_tasks"], 2)
+
+    def test_inactive_employee_excluded_from_conflict_counts(self):
+        self.employees[1]["status"] = "Inactive"
+        tasks = [self.make_task(10, -3, employee_id=2)]
+        result = get_team_workload_summary(self.employees, tasks, TODAY)
+        self.assertEqual(result["employees_with_conflicts"], 0)
+        self.assertEqual(result["total_deadline_conflicts"], 0)
+
+    def test_inactive_employee_excluded_from_fairness(self):
+        self.employees[1]["status"] = "Inactive"
+        tasks = [
+            self.make_task(10, 3, employee_id=1, priority="High", difficulty="Hard"),
+            self.make_task(20, 3, employee_id=2, priority="High", difficulty="Hard"
+            )
+        ]
+        result = get_team_workload_summary(self.employees, tasks, TODAY)
+        fairness = result["fairness"]
+        self.assertNotIn(2, fairness["high_priority_tasks"])
+        self.assertNotIn(2, fairness["difficult_tasks"])
+
+    def test_all_employees_inactive(self):
+        for employee in self.employees:
+            employee["status"] = "Inactive"
+        result = get_team_workload_summary(self.employees, [], TODAY)
+        self.assertEqual(result["total_employees"], 0)
+        self.assertEqual(result["employees"], [])
+        self.assertEqual(result["outstanding_hours"], 0)
+        self.assertEqual(result["employees_with_conflicts"], 0)
+        self.assertEqual(result["total_deadline_conflicts"], 0)
+        self.assertIsNone(result["fairness"]["one_week_utilization_spread"])
 
     def test_original_inputs_not_modified(self):
         tasks = [

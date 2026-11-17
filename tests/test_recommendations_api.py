@@ -246,6 +246,38 @@ class TestGenerateRecommendationsAPI(unittest.TestCase):
         )
         self.assertEqual(len(task_information["tasks"]), 2)
 
+    def test_all_inactive_employees_skips_gemini(self):
+        employee = self.create_employee()
+        self.create_task()
+        response = self.client.put(
+            f'/employees/{employee["employee_id"]}',
+            json={**EMPLOYEE, "status": "Inactive"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        with self.mock_gemini([]) as gemini:
+            response = self.client.post("/recommendations")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"recommendations": []})
+        gemini.assert_not_called()
+
+    def test_inactive_employees_excluded_from_gemini_data(self):
+        active = self.create_employee()
+        inactive = self.create_employee(name="Taylor Kim")
+        self.create_task()
+        response = self.client.put(
+            f'/employees/{inactive["employee_id"]}',
+            json={**EMPLOYEE, "name": "Taylor Kim", "status": "Inactive"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        with self.mock_gemini([]) as gemini:
+            response = self.client.post("/recommendations")
+        self.assertEqual(response.status_code, 200, response.text)
+        task_information = json.loads(gemini.call_args.args[0])
+        self.assertEqual(
+            [employee["employee_id"] for employee in task_information["employees"]],
+            [active["employee_id"]]
+        )
+
 
 class TestPreviewRecommendationAPI(unittest.TestCase):
     def setUp(self):
@@ -472,6 +504,21 @@ class TestPreviewRecommendationAPI(unittest.TestCase):
         self.assertTrue(result["applied"])
         self.assertEqual(result["capacity_errors"], {})
 
+    def test_inactive_employee_preview_rejected(self):
+        employee = self.create_employee()
+        task = self.create_task()
+        response = self.client.put(
+            f'/employees/{employee["employee_id"]}',
+            json={**EMPLOYEE, "status": "Inactive"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.preview(self.recommend(task, employee))
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertFalse(result["valid"])
+        self.assertFalse(result["applied"])
+        self.assertTrue(result["errors"])
+
 
 class TestEvaluateRecommendationsAPI(unittest.TestCase):
     def setUp(self):
@@ -695,6 +742,19 @@ class TestEvaluateRecommendationsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertFalse(missing.exists())
 
+    def test_inactive_employee_blocks_commit(self):
+        employee = self.create_employee()
+        task = self.create_task()
+        response = self.client.put(
+            f'/employees/{employee["employee_id"]}',
+            json={**EMPLOYEE, "status": "Inactive"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.evaluate([self.recommend(task, employee)])
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertFalse(result["can_commit"])
+        self.assertFalse(result["recommendations"][0]["valid"])
 
 
 class TestApproveRecommendationsAPI(unittest.TestCase):
@@ -910,6 +970,18 @@ class TestApproveRecommendationsAPI(unittest.TestCase):
                 (employee["employee_id"],)
             )
         response = self.approve([recommendation])
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(self.saved_task(task)["employee_id"])
+
+    def test_inactive_employee_approval_rejected(self):
+        employee = self.create_employee()
+        task = self.create_task()
+        response = self.client.put(
+            f'/employees/{employee["employee_id"]}',
+            json={**EMPLOYEE, "status": "Inactive"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.approve([self.recommend(task, employee)])
         self.assertEqual(response.status_code, 400)
         self.assertIsNone(self.saved_task(task)["employee_id"])
 

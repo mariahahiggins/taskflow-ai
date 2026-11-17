@@ -55,8 +55,30 @@ class TestAPIClient(unittest.TestCase):
         data = {
             "name": "Sarah",
             "available_hours": 30,
-            "experience_level": "Senior"
+            "experience_level": "Senior",
+            "status": "Active"
         }
+        api_client.update_employee(1, data)
+        self.assert_api_call("PUT", "/employees/1", data)
+
+    def test_deactivate_employee(self):
+        data = {
+            "name": "Sarah",
+            "available_hours": 30,
+            "experience_level": "Senior",
+            "status": "Inactive"
+        }
+        api_client.update_employee(1, data)
+        self.assert_api_call("PUT", "/employees/1", data)
+
+    def test_reactivate_employee(self):
+        data = {
+            "name": "Sarah",
+            "available_hours": 30,
+            "experience_level": "Senior",
+            "status": "Active"
+        }
+
         api_client.update_employee(1, data)
         self.assert_api_call("PUT", "/employees/1", data)
 

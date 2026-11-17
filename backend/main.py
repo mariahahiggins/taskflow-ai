@@ -100,7 +100,7 @@ def get_employee(id: Annotated[int, Path(gt=0)]):
 def create_employee(employee: EmployeeCreate):
     values = employee.model_dump()
     employee_id = database.add_employee(**values)
-    return {"employee_id": employee_id, **values}
+    return {"employee_id": employee_id, "status": "Active", **values}
 
 
 @data_routes.put("/employees/{id}", response_model=EmployeeResponse, tags=["Employees"])
@@ -133,7 +133,13 @@ def get_task(id: Annotated[int, Path(gt=0)]):
 )
 def create_task(task: TaskCreate):
     values = task.model_dump(mode="json", exclude={"status"})
-    task_id = database.add_task(**values)
+    try:
+        task_id = database.add_task(**values)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc)
+        ) from exc
     return {"task_id": task_id, "status": task.status, **values}
 
 
@@ -141,7 +147,14 @@ def create_task(task: TaskCreate):
 def update_task(id: Annotated[int, Path(gt=0)], task: TaskUpdate):
     """Replace all editable task fields, including status and assignment."""
     values = task.model_dump(mode="json")
-    if not database.update_task(id, **values):
+    try:
+        updated = database.update_task(id, **values)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc)
+        ) from exc
+    if not updated:
         raise HTTPException(status_code=404, detail="Task not found.")
     return {"task_id": id, **values}
 
@@ -181,7 +194,7 @@ def generate_recommendations():
     employees = database.get_employees()
     tasks = database.get_tasks()
 
-    if not employees:
+    if not any(employee["status"] == "Active" for employee in employees):
         return {"recommendations": []}
 
     eligible_tasks = [
@@ -223,6 +236,8 @@ def generate_recommendations():
         ) from exc
     
     except genai_errors.APIError as exc:
+        print(f"GEMINI API ERROR: {type(exc).__name__}: {exc}", flush=True)
+
         raise HTTPException(
             status_code=502,
             detail="Gemini API request failed."

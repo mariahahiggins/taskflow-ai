@@ -1,11 +1,11 @@
-"""
-Calculate the difference between the highest and lowest
-employee utilization percentages for a given period.
-
-Excludes employees with None utilization.
-Returns None if fewer than two employees have valid values.
-"""
 def calculate_utilization_spread(employee_summaries, period):
+    """
+    Calculate the difference between the highest and lowest
+    employee utilization percentages for a given period.
+
+    Excludes employees with None utilization.
+    Returns None if fewer than two employees have valid values.
+    """
     if period not in ("one_week", "two_week"):
         raise ValueError("Invalid utilization period")
 
@@ -22,14 +22,14 @@ def calculate_utilization_spread(employee_summaries, period):
 
     return max(utilizations) - min(utilizations)
 
-"""    
-Count active high-priority tasks and their estimated
-hours for each employee.
-
-Excludes completed and unassigned tasks.
-Includes employees with no high-priority tasks.
-"""
 def count_high_priority_tasks(employees, tasks):
+    """    
+    Count active high-priority tasks and their estimated
+    hours for each employee.
+
+    Excludes completed and unassigned tasks.
+    Includes employees with no high-priority tasks.
+    """
     counts = {
         employee["employee_id"]: {
             "count": 0,
@@ -55,14 +55,14 @@ def count_high_priority_tasks(employees, tasks):
 
     return counts
 
-"""
-Count active Hard tasks and their estimated hours
-for each employee.
-
-Excludes completed and unassigned tasks.
-Includes employees with no Hard tasks.
-"""
 def count_difficult_tasks(employees, tasks):
+    """
+    Count active Hard tasks and their estimated hours
+    for each employee.
+
+    Excludes completed and unassigned tasks.
+    Includes employees with no Hard tasks.
+    """
     counts = {
         employee["employee_id"]: {
             "count": 0,
@@ -88,13 +88,13 @@ def count_difficult_tasks(employees, tasks):
 
     return counts
 
-"""
-Calculate team-wide fairness measurements.
-
-Compares employee utilization, high-priority work,
-and difficult work across the team.
-"""
 def calculate_team_fairness(employees, tasks, employee_summaries):
+    """
+    Calculate team-wide fairness measurements.
+
+    Compares employee utilization, high-priority work,
+    and difficult work across the team.
+    """
     one_week_spread = calculate_utilization_spread(employee_summaries, "one_week")
 
     two_week_spread = calculate_utilization_spread(employee_summaries, "two_week")

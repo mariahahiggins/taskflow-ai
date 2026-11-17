@@ -516,6 +516,23 @@ class TestTeamFairness(unittest.TestCase):
         self.assertAlmostEqual(result["high_priority_hours_spread"], 7.75)
         self.assertAlmostEqual(result["difficult_hours_spread"], 7.75)
 
+    def test_excluded_employee_does_not_affect_fairness(self):
+        active_employees = [self.employees[0], self.employees[2]]
+        active_summaries = [self.employee_summaries[0], self.employee_summaries[2]]
+        tasks = [
+            self.make_task(10, priority="High", difficulty="Hard", employee_id=1),
+            self.make_task(20, priority="High", difficulty="Hard", employee_id=2)
+        ]
+        result = calculate_team_fairness(active_employees, tasks, active_summaries)
+        self.assertNotIn(2, result["high_priority_tasks"])
+        self.assertNotIn(2, result["difficult_tasks"])
+        self.assertEqual(
+            result["high_priority_tasks"][1],
+            {"count": 1, "hours": 10}
+        )
+        self.assertEqual(result["one_week_utilization_spread"], 20.0)
+        self.assertEqual(result["two_week_utilization_spread"], 10.0)
+
     def test_original_inputs_not_modified(self):
         tasks = [self.make_task(10, priority="High", difficulty="Hard")]
         original_employees = [employee.copy() for employee in self.employees]

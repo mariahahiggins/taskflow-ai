@@ -7,7 +7,9 @@ CREATE TABLE IF NOT EXISTS employees (
     available_hours REAL NOT NULL
         CHECK (available_hours >= 0),
     experience_level TEXT NOT NULL
-        CHECK (experience_level IN ('Junior', 'Mid', 'Senior'))
+        CHECK (experience_level IN ('Junior', 'Mid', 'Senior')),
+    status TEXT NOT NULL DEFAULT 'Active'
+        CHECK (status IN ('Active', 'Inactive'))
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

@@ -10,6 +10,7 @@ import requests
 from frontend.api_client import (
     get_employees,
     create_employee,
+    update_employee,
     get_tasks,
     create_task,
     update_task,
@@ -34,7 +35,8 @@ try:
             "Employee ID": employee["employee_id"],
             "Name": employee["name"],
             "Available Hours": employee["available_hours"],
-            "Experience": employee["experience_level"]
+            "Experience": employee["experience_level"],
+            "Status": employee["status"]
         }
         for employee in api_employees
     ]
@@ -160,10 +162,12 @@ with dashboard:
         for conflict in employee["deadline_conflicts"]:
 
             if conflict["type"] == "overdue":
+                task_title = conflict.get("task_title") or "Unnamed task"
                 st.warning(
-                    f'{employee["name"]} has an overdue task '
-                    f'due {conflict["deadline"]} '
-                    f'({conflict["required_hours"]:g} hours).'
+                    f'{employee["name"]} has an overdue task: '
+                    f'{task_title} '
+                    f'(due {conflict["deadline"]}, '
+                    f'{conflict["required_hours"]:g} hours).'
                 )
 
             elif conflict["type"] == "capacity":
@@ -295,25 +299,26 @@ with dashboard:
                 for selected in st.session_state.selected_recommendations
             )
 
-            # Calculate the proposed assignment's impact
+            # Calculate impact only for recommendations not yet selected
             preview = None
 
-            try:
-                preview = preview_recommendation({
-                    "recommendation": {
-                        "task_id": task_id,
-                        "employee_id": employee_id,
-                        "reason": recommendation["reason"]
-                    },
-                    "selected_recommendations":
-                        st.session_state.selected_recommendations
-                })
+            if not is_selected:
+                try:
+                    preview = preview_recommendation({
+                        "recommendation": {
+                            "task_id": task_id,
+                            "employee_id": employee_id,
+                            "reason": recommendation["reason"]
+                        },
+                        "selected_recommendations":
+                            st.session_state.selected_recommendations
+                    })
 
-            except requests.exceptions.RequestException:
-                st.error(
-                    f"Could not calculate assignment impact "
-                    f"for {task['title']}."
-                )
+                except requests.exceptions.RequestException:
+                    st.error(
+                        f"Could not calculate assignment impact "
+                        f"for {task['title']}."
+                    )
 
             with st.container(border=True):
 
@@ -402,6 +407,9 @@ with dashboard:
                                 st.markdown(
                                     "✅ No capacity or fairness issues"
                                 )
+                                
+                    if is_selected:
+                        st.caption("Included in Selected Changes evaluation.")
 
                     if is_selected:
 
@@ -571,8 +579,42 @@ with dashboard:
 with employees_tab:
     st.header("Employees")
 
+    active_count = sum(
+        1 for e in st.session_state.employees
+        if e["Status"] == "Active"
+    )
+
+    inactive_count = sum(
+        1 for e in st.session_state.employees
+        if e["Status"] == "Inactive"
+    )
+
+    col1, col2 = st.columns(2)
+
+    col1.metric("Active Employees", active_count)
+    col2.metric("Inactive Employees", inactive_count)
+
+    status_filter = st.selectbox(
+        "Filter Employees",
+        ["All", "Active", "Inactive"]
+    )
+
+    employees_to_display = st.session_state.employees
+
+    if status_filter == "Active":
+        employees_to_display = [
+            e for e in st.session_state.employees
+            if e["Status"] == "Active"
+        ]
+
+    elif status_filter == "Inactive":
+        employees_to_display = [
+            e for e in st.session_state.employees
+            if e["Status"] == "Inactive"
+        ]
+
     st.dataframe(
-        pd.DataFrame(st.session_state.employees),
+        pd.DataFrame(employees_to_display),
         width="stretch",
         hide_index=True
     )
@@ -622,6 +664,91 @@ with employees_tab:
 
                     except Exception as error:
                         st.error(f"Could not add employee: {error}")
+
+
+    # Edit employees
+    with st.expander("Edit Existing Employees"):
+
+        if st.session_state.employees:
+
+            employee_options = {
+                f'{employee["Employee ID"]} - {employee["Name"]}':
+                employee["Employee ID"]
+                for employee in st.session_state.employees
+            }
+
+            selected_employee = st.selectbox(
+                "Choose an employee",
+                list(employee_options.keys())
+            )
+
+            selected_employee_id = employee_options[selected_employee]
+
+            employee_to_edit = next(
+                employee for employee in st.session_state.employees
+                if employee["Employee ID"] == selected_employee_id
+            )
+
+            with st.container(border=True):
+                with st.form("edit_employee_form"):
+
+                    edited_name = st.text_input(
+                        "Employee Name",
+                        value=employee_to_edit["Name"]
+                    )
+
+                    edited_hours = st.number_input(
+                        "Available Hours per Week",
+                        min_value=1,
+                        max_value=168,
+                        value=int(employee_to_edit["Available Hours"])
+                    )
+
+                    edited_experience = st.selectbox(
+                        "Experience Level",
+                        ["Junior", "Mid", "Senior"],
+                        index=["Junior", "Mid", "Senior"].index(
+                            employee_to_edit["Experience"]
+                        )
+                    )
+
+                    edited_status = st.selectbox(
+                        "Status",
+                        ["Active", "Inactive"],
+                        index=["Active", "Inactive"].index(
+                            employee_to_edit["Status"]
+                        )
+                    )
+
+                    save_employee = st.form_submit_button("Save Changes")
+
+                    if save_employee:
+                        if not edited_name.strip():
+                            st.error("Please enter an employee name.")
+
+                        else:
+                            employee_data = {
+                                "name": edited_name.strip(),
+                                "available_hours": float(edited_hours),
+                                "experience_level": edited_experience,
+                                "status": edited_status
+                            }
+
+                            try:
+                                update_employee(
+                                    selected_employee_id,
+                                    employee_data
+                                )
+
+                                st.success("Employee updated successfully!")
+                                st.rerun()
+
+                            except Exception as error:
+                                st.error(f"Could not update employee: {error}")
+
+        else:
+            st.info("No employees available to edit.")
+
 # TASKS
 with tasks_tab:
     st.header("Tasks")
@@ -693,7 +820,13 @@ with tasks_tab:
                     employee_names = ["Unassigned"] + [
                         employee["Name"]
                         for employee in st.session_state.employees
+                        if employee["Status"] == "Active"
                     ]
+
+                    current_assignee = task_to_edit["Assigned To"]
+
+                    if current_assignee not in employee_names:
+                        employee_names.append(current_assignee)
 
                     edited_employee = st.selectbox(
                         "Assigned To",
@@ -770,6 +903,7 @@ with tasks_tab:
 
             names = ["Unassigned"] + [
                 e["Name"] for e in st.session_state.employees
+                if e["Status"] == "Active"
             ]
             assigned_to = st.selectbox("Assign Employee", names)
 

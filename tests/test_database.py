@@ -33,6 +33,17 @@ class TestDatabase(unittest.TestCase):
     def add_sample_employee(self, name="Sarah", hours=40, level="Mid"):
         return database.add_employee(name, hours, level)
 
+    def change_employee_status(self, employee_id, status):
+        employee = database.get_employee(employee_id)
+
+        return database.update_employee(
+            employee_id,
+            employee["name"],
+            employee["available_hours"],
+            employee["experience_level"],
+            status
+        )
+
     def add_sample_task(
         self, title="Prepare report", hours=10, deadline="2026-11-12",
         priority="High", difficulty="Medium", employee_id=None,
@@ -64,6 +75,7 @@ class TestDatabase(unittest.TestCase):
             self.assertEqual(employee["name"], name)
             self.assertEqual(employee["available_hours"], hours)
             self.assertEqual(employee["experience_level"], level)
+            self.assertEqual(employee["status"], "Active")
 
     def test_get_employee_existing(self):
         employee_id = self.add_sample_employee()
@@ -72,6 +84,7 @@ class TestDatabase(unittest.TestCase):
             "name": "Sarah",
             "available_hours": 40,
             "experience_level": "Mid",
+            "status": "Active"
         })
 
     def test_get_employee_missing(self):
@@ -108,10 +121,15 @@ class TestDatabase(unittest.TestCase):
             "name": "Sarah Updated",
             "available_hours": 22.5,
             "experience_level": "Senior",
+            "status": "Active"
         })
 
     def test_update_employee_missing_returns_false(self):
         self.assertFalse(database.update_employee(999, "Nobody", 20, "Junior"))
+        self.assertEqual(database.get_employees(), [])
+
+    def test_update_employee_missing_with_status_returns_false(self):
+        self.assertFalse(database.update_employee(999, "Nobody", 20, "Junior", "Inactive"))
         self.assertEqual(database.get_employees(), [])
 
     def test_update_employee_same_values_still_reports_match(self):
@@ -137,6 +155,109 @@ class TestDatabase(unittest.TestCase):
                 with self.assertRaises(sqlite3.IntegrityError):
                     database.update_employee(employee_id, name, hours, level)
                 self.assertEqual(database.get_employee(employee_id),original)
+
+    
+    # EMPLOYEE STATUS OPERATIONS
+
+    def test_update_employee_changes_details_and_status(self):
+        employee_id = self.add_sample_employee()
+        self.assertTrue(database.update_employee(employee_id, "Updated Sarah", 25, "Senior", "Inactive"))
+        employee = database.get_employee(employee_id)
+        self.assertEqual(employee["name"], "Updated Sarah")
+        self.assertEqual(employee["available_hours"], 25)
+        self.assertEqual(employee["experience_level"], "Senior")
+        self.assertEqual(employee["status"], "Inactive")
+
+
+    def test_update_employee_rejects_invalid_status(self):
+        employee_id = self.add_sample_employee()
+        original = database.get_employee(employee_id)
+        for status in ("Deleted", "active", "", 123):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError):
+                    database.update_employee(
+                        employee_id, "Updated Sarah", 25, "Senior", status
+                    )
+                self.assertEqual(database.get_employee(employee_id), original)
+
+    def test_new_employee_defaults_to_active(self):
+        employee_id = self.add_sample_employee()
+        self.assertEqual(database.get_employee(employee_id)["status"], "Active")
+
+    def test_get_employees_filters_by_status(self):
+        sarah_id = self.add_sample_employee("Sarah")
+        james_id = self.add_sample_employee("James")
+        self.change_employee_status(james_id, "Inactive")
+        active = database.get_employees(status="Active")
+        inactive = database.get_employees(status="Inactive")
+        all_employees = database.get_employees()
+        self.assertEqual({e["employee_id"] for e in active}, {sarah_id})
+        self.assertEqual({e["employee_id"] for e in inactive}, {james_id})
+        self.assertEqual(len(all_employees), 2)
+
+    def test_get_employees_rejects_invalid_status(self):
+        for status in ("Deleted", "active", "", 123):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError):
+                    database.get_employees(status=status)
+
+    def test_deactivate_employee_preserves_record(self):
+        employee_id = self.add_sample_employee()
+        self.assertTrue(self.change_employee_status(employee_id, "Inactive"))
+        employee = database.get_employee(employee_id)
+        self.assertIsNotNone(employee)
+        self.assertEqual(employee["status"], "Inactive")
+
+    def test_reactivate_employee(self):
+        employee_id = self.add_sample_employee()
+        self.change_employee_status(employee_id, "Inactive")
+        self.assertTrue(self.change_employee_status(employee_id, "Active"))
+        self.assertEqual(database.get_employee(employee_id)["status"], "Active")
+
+
+    def test_deactivation_unassigns_active_tasks(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task(employee_id=employee_id)
+        self.change_employee_status(employee_id, "Inactive")
+        self.assertIsNone(database.get_task(task_id)["employee_id"])
+        self.assertEqual(database.get_task(task_id)["status"], "Active")
+
+    def test_deactivation_preserves_completed_task_history(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task(employee_id=employee_id)
+        database.update_task(
+            task_id, "Prepare report", 10, "2026-11-12",
+            "High", "Medium", "Completed", employee_id
+        )
+        self.change_employee_status(employee_id, "Inactive")
+        task = database.get_task(task_id)
+        self.assertEqual(task["employee_id"], employee_id)
+        self.assertEqual(task["status"], "Completed")
+
+    def test_deactivation_only_affects_selected_employee(self):
+        sarah_id = self.add_sample_employee("Sarah")
+        james_id = self.add_sample_employee("James")
+        sarah_task = self.add_sample_task("Sarah task", employee_id=sarah_id)
+        james_task = self.add_sample_task("James task", employee_id=james_id)
+        self.change_employee_status(sarah_id, "Inactive")
+        self.assertIsNone(database.get_task(sarah_task)["employee_id"])
+        self.assertEqual(database.get_task(james_task)["employee_id"],james_id)
+
+    def test_reactivation_does_not_restore_old_assignments(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task(employee_id=employee_id)
+        self.change_employee_status(employee_id, "Inactive")
+        self.change_employee_status(employee_id, "Active")
+        self.assertIsNone(database.get_task(task_id)["employee_id"])
+
+    def test_editing_employee_preserves_inactive_status(self):
+        employee_id = self.add_sample_employee()
+        self.change_employee_status(employee_id, "Inactive")
+        database.update_employee(employee_id, "Updated Sarah", 25, "Senior")
+        employee = database.get_employee(employee_id)
+        self.assertEqual(employee["name"], "Updated Sarah")
+        self.assertEqual(employee["status"], "Inactive")
+  
 
     # TASK READ OPERATIONS
 
@@ -248,7 +369,6 @@ class TestDatabase(unittest.TestCase):
                     deadline
                 )
 
-
     def test_task_invalid_calendar_dates_rejected(self):
         invalid_dates = (
             "2026-02-30",
@@ -269,7 +389,6 @@ class TestDatabase(unittest.TestCase):
                     self.add_sample_task(deadline=deadline)
 
         self.assertEqual(database.get_tasks(), [])
-
 
     def test_update_task_changes_every_editable_field(self):
         employee_id = self.add_sample_employee()
@@ -348,8 +467,7 @@ class TestDatabase(unittest.TestCase):
             ("Task", 5, "2026-11-12", "High", "Extreme", "Active", None),
             ("Task", 5, "2026-11-12", "High", None, "Active", None),
             ("Task", 5, "2026-11-12", "High", "Easy", "In Progress", None),
-            ("Task", 5, "2026-11-12", "High", "Easy", None, None),
-            ("Task", 5, "2026-11-12", "High", "Easy", "Active", 999),
+            ("Task", 5, "2026-11-12", "High", "Easy", None, None)
         )
 
         for title, hours, deadline, priority, difficulty, status, employee_id in invalid_cases:
@@ -369,6 +487,13 @@ class TestDatabase(unittest.TestCase):
 
                 self.assertEqual(database.get_task(task_id), original)
 
+        with self.assertRaises(ValueError):
+            database.update_task(
+                task_id, "Task", 5, "2026-11-12",
+                "High", "Easy", "Active", 999
+            )
+        self.assertEqual(database.get_task(task_id), original)
+
     
     def test_update_task_rejects_invalid_dates(self):
         task_id = self.add_sample_task()
@@ -382,6 +507,68 @@ class TestDatabase(unittest.TestCase):
                         "High", "Easy", "Active", None
                     )
                 self.assertEqual(database.get_task(task_id), original)
+
+    
+    # INACTIVE EMPLOYEE ASSIGNMENT SAFEGUARDS
+
+    def test_add_task_rejects_inactive_employee(self):
+        employee_id = self.add_sample_employee()
+        self.change_employee_status(employee_id, "Inactive")
+        with self.assertRaisesRegex(ValueError, "inactive employee"):
+            self.add_sample_task(employee_id=employee_id)
+        self.assertEqual(database.get_tasks(), [])
+
+    def test_update_task_rejects_inactive_employee(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task()
+        original = database.get_task(task_id)
+        self.change_employee_status(employee_id, "Inactive")
+        with self.assertRaisesRegex(ValueError, "inactive employee"):
+            database.update_task(
+                task_id, "Prepare report", 10, "2026-11-12",
+                "High", "Medium", "Active", employee_id
+            )
+        self.assertEqual(database.get_task(task_id), original)
+
+    def test_completed_task_can_be_edited_after_deactivation(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task(employee_id=employee_id)
+        database.update_task(
+            task_id, "Prepare report", 10, "2026-11-12",
+            "High", "Medium", "Completed", employee_id
+        )
+        self.change_employee_status(employee_id, "Inactive")
+        self.assertTrue(database.update_task(
+            task_id, "Updated report", 12, "2026-11-12",
+            "High", "Medium", "Completed", employee_id
+        ))
+        task = database.get_task(task_id)
+        self.assertEqual(task["title"], "Updated report")
+        self.assertEqual(task["employee_id"], employee_id)
+
+    def test_approval_rejects_inactive_employee(self):
+        employee_id = self.add_sample_employee()
+        task_id = self.add_sample_task()
+        self.change_employee_status(employee_id, "Inactive")
+        with self.assertRaises(ValueError):
+            database.approve_assignments([
+                {"task_id": task_id, "employee_id": employee_id}
+            ])
+        self.assertIsNone(database.get_task(task_id)["employee_id"])
+
+    def test_approval_rolls_back_if_employee_inactive(self):
+        active_id = self.add_sample_employee("Sarah")
+        inactive_id = self.add_sample_employee("James")
+        first_task = self.add_sample_task("First")
+        second_task = self.add_sample_task("Second")
+        self.change_employee_status(inactive_id, "Inactive")
+        with self.assertRaises(ValueError):
+            database.approve_assignments([
+                {"task_id": first_task, "employee_id": active_id},
+                {"task_id": second_task, "employee_id": inactive_id},
+            ])
+        self.assertIsNone(database.get_task(first_task)["employee_id"])
+        self.assertIsNone(database.get_task(second_task)["employee_id"])
 
     # CONSTRAINTS AND ERROR HANDLING
 
@@ -417,8 +604,7 @@ class TestDatabase(unittest.TestCase):
             ("Task", 5, "2026-11-12", "Urgent", "Easy", None),
             ("Task", 5, "2026-11-12", None, "Easy", None),
             ("Task", 5, "2026-11-12", "High", "Extreme", None),
-            ("Task", 5, "2026-11-12", "High", None, None),
-            ("Task", 5, "2026-11-12", "High", "Easy", 999),
+            ("Task", 5, "2026-11-12", "High", None, None)
         )
         for title, hours, deadline, priority, difficulty, employee_id in invalid_cases:
             with self.subTest(title=title, hours=hours, deadline=deadline,
@@ -428,6 +614,13 @@ class TestDatabase(unittest.TestCase):
                     database.add_task(
                         title, hours, deadline, priority, difficulty, employee_id
                     )
+        self.assertEqual(database.get_tasks(), [])
+
+        with self.assertRaises(ValueError):
+            database.add_task(
+                "Task", 5, "2026-11-12",
+                "High", "Easy", 999
+            )
         self.assertEqual(database.get_tasks(), [])
 
     def test_task_empty_and_whitespace_titles_rejected(self):
@@ -459,7 +652,7 @@ class TestDatabase(unittest.TestCase):
     def test_update_task_invalid_foreign_key_preserves_old_values(self):
         task_id = self.add_sample_task()
         original = database.get_task(task_id)
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaises(ValueError):
             database.update_task(
                 task_id, "Changed", 5, "2026-11-12", "Low",
                 "Easy", "Active", 999,

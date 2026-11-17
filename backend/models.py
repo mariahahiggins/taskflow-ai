@@ -25,11 +25,13 @@ class EmployeeCreate(APIModel):
 
 
 class EmployeeUpdate(EmployeeCreate):
-    """A PUT request supplies all three editable employee fields."""
+    """A PUT request supplies all four editable employee fields."""
+
+    status: Literal["Active", "Inactive"]
 
 
-class EmployeeResponse(EmployeeCreate):
-    """Employee data returned by the API, including the saved ID."""
+class EmployeeResponse(EmployeeUpdate):
+    """Employee data returned by the API, including the saved ID and status."""
 
     employee_id: int = Field(gt=0, strict=True)
 
@@ -68,6 +70,7 @@ class DeadlineConflictResponse(APIModel):
     available_hours: float = Field(ge=0)
     shortfall_hours: float = Field(gt=0)
     type: Literal["overdue", "capacity"]
+    task_title: str | None = None
 
 
 class EmployeeWorkloadResponse(EmployeeResponse):

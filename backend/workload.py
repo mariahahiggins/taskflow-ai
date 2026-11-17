@@ -20,13 +20,14 @@ def calculate_outstanding_hours(tasks):
         if task["status"] == "Active"
     )
 
-"""
-Calculate available working hours between two dates, inclusive.
 
-Assumes a Monday-Friday schedule with weekly hours spread
-evenly across five working days.
-"""
 def calculate_available_hours(weekly_hours, start_date, end_date):
+    """
+    Calculate available working hours between two dates, inclusive.
+
+    Assumes a Monday-Friday schedule with weekly hours spread
+    evenly across five working days.
+    """
     if weekly_hours < 0:
         raise ValueError("Weekly hours cannot be negative.")
 
@@ -46,13 +47,14 @@ def calculate_available_hours(weekly_hours, start_date, end_date):
 
     return working_days * daily_hours
 
-"""
-Group active tasks by deadline relative to today.
 
-Categories are mutually exclusive:
-overdue, within_1_week, week_2, after_2_weeks.
-"""
 def group_tasks_by_deadline(tasks, today):
+    """
+    Group active tasks by deadline relative to today.
+
+    Categories are mutually exclusive:
+    overdue, within_1_week, week_2, after_2_weeks.
+    """
     groups = {
         "overdue": [],
         "within_1_week": [],
@@ -78,14 +80,15 @@ def group_tasks_by_deadline(tasks, today):
 
     return groups
 
-"""
-Group active task hours into calendar weeks.
 
-This week includes overdue tasks and tasks due through Sunday.
-Next week includes tasks due the following Monday through Sunday.
-Later includes tasks due after next Sunday.
-"""
 def group_task_hours_by_calendar_week(tasks, today):
+    """
+    Group active task hours into calendar weeks.
+
+    This week includes overdue tasks and tasks due through Sunday.
+    Next week includes tasks due the following Monday through Sunday.
+    Later includes tasks due after next Sunday.
+    """
     this_sunday = today + timedelta(days=6 - today.weekday())
     next_sunday = this_sunday + timedelta(days=7)
 
@@ -111,8 +114,9 @@ def group_task_hours_by_calendar_week(tasks, today):
 
     return hours
 
-"""Return active task hours due on or before a deadline."""
+
 def calculate_hours_due_by(tasks, deadline):
+    """Return active task hours due on or before a deadline."""
     total_hours = 0
 
     for task in tasks:
@@ -126,12 +130,12 @@ def calculate_hours_due_by(tasks, deadline):
 
     return total_hours
 
-"""
-Identify overdue tasks and deadlines where the employee
-has insufficient working hours to finish assigned tasks.
-"""
 
 def check_deadline_conflicts(employee, tasks, today):
+    """
+    Identify overdue tasks and deadlines where the employee
+    has insufficient working hours to finish assigned tasks.
+    """
     active_tasks = [
         task for task in tasks
         if task["status"] == "Active"
@@ -144,6 +148,7 @@ def check_deadline_conflicts(employee, tasks, today):
 
         if deadline < today:
             conflicts.append({
+                "task_title": task.get("title"),
                 "deadline": task["deadline"],
                 "required_hours": task["estimated_hours"],
                 "available_hours": 0,
@@ -181,13 +186,14 @@ def check_deadline_conflicts(employee, tasks, today):
 
     return conflicts
 
-"""
-Return active tasks sorted by deadline, earliest first.
 
-Includes overdue and unassigned tasks.
-Excludes completed tasks.
-"""
 def get_upcoming_deadlines(tasks, today):
+    """
+    Return active tasks sorted by deadline, earliest first.
+
+    Includes overdue and unassigned tasks.
+    Excludes completed tasks.
+    """
     active_tasks = [
         task for task in tasks
         if task["status"] == "Active"
@@ -195,16 +201,17 @@ def get_upcoming_deadlines(tasks, today):
 
     return sorted(active_tasks, key=lambda task: task["deadline"])
 
-"""
-Calculate deadline-based workload demand over one and two weeks.
 
-Percentages include all active tasks due by each horizon,
-including overdue tasks.
-
-Returns None for a percentage when the employee has no
-available working hours in that period.
-"""
 def calculate_utilization(employee, tasks, today):
+    """
+    Calculate deadline-based workload demand over one and two weeks.
+
+    Percentages include all active tasks due by each horizon,
+    including overdue tasks.
+
+    Returns None for a percentage when the employee has no
+    available working hours in that period.
+    """
     one_week_end = today + timedelta(days=7)
     two_week_end = today + timedelta(days=14)
 
@@ -228,13 +235,14 @@ def calculate_utilization(employee, tasks, today):
         "two_weeks": two_week_percentage
     }
 
-"""
-Calculate a workload summary for one employee.
 
-Filters tasks by employee ID to prevent counting
-tasks assigned to other employees or unassigned tasks.
-"""
 def get_employee_workload_summary(employee, tasks, today):
+    """
+    Calculate a workload summary for one employee.
+
+    Filters tasks by employee ID to prevent counting
+    tasks assigned to other employees or unassigned tasks.
+    """
     employee_tasks = [
         task for task in tasks
         if task["employee_id"] == employee["employee_id"]
@@ -260,6 +268,7 @@ def get_employee_workload_summary(employee, tasks, today):
         "name": employee["name"],
         "experience_level": employee["experience_level"],
         "available_hours": employee["available_hours"],
+        "status": employee.get("status", "Active"),
         "outstanding_hours": outstanding_hours,
         "active_task_count": len(active_tasks),
         "overdue_task_count": len(deadline_groups["overdue"]),
@@ -274,24 +283,31 @@ def get_employee_workload_summary(employee, tasks, today):
         "deadline_conflicts": deadline_conflicts
     }
 
-"""
-Combine individual workload summaries, team totals,
-fairness measurements, and upcoming deadlines.
 
-Assigned active tasks contribute to employee workload.
-Unassigned active tasks are counted separately.
-"""
 def get_team_workload_summary(employees, tasks, today):
-    employee_summaries = [
-        get_employee_workload_summary(employee, tasks, today)
-        for employee in employees
+    """
+    Combine individual workload summaries, team totals,
+    fairness measurements, and upcoming deadlines.
+
+    Assigned active tasks contribute to employee workload.
+    Unassigned active tasks are counted separately.
+    """
+
+    active_employees = [
+        employee for employee in employees
+        if employee.get("status", "Active") == "Active"
     ]
 
-    fairness = calculate_team_fairness(employees, tasks, employee_summaries)
+    employee_summaries = [
+        get_employee_workload_summary(employee, tasks, today)
+        for employee in active_employees
+    ]
+
+    fairness = calculate_team_fairness(active_employees, tasks, employee_summaries)
 
     employee_ids = {
         employee["employee_id"]
-        for employee in employees
+        for employee in active_employees
     }
 
     assigned_active_tasks = [
@@ -317,7 +333,7 @@ def get_team_workload_summary(employees, tasks, today):
     )
 
     return {
-        "total_employees": len(employees),
+        "total_employees": len(active_employees),
         "active_tasks": len(assigned_active_tasks) + len(unassigned_tasks),
         "unassigned_tasks": len(unassigned_tasks),
         "outstanding_hours": sum(

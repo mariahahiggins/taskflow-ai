@@ -30,23 +30,17 @@ class TestAssignmentRecords(unittest.TestCase):
         ]
 
     def test_valid_employee_and_task(self):
-        employee, task = find_assignment_records(
-            self.employees, self.tasks, 101, 2
-        )
+        employee, task = find_assignment_records(self.employees, self.tasks, 101, 2)
         self.assertEqual(employee["name"], "Taylor")
         self.assertEqual(task["title"], "Documentation")
 
     def test_invalid_employee(self):
-        employee, task = find_assignment_records(
-            self.employees, self.tasks, 101, 999
-        )
+        employee, task = find_assignment_records(self.employees, self.tasks, 101, 999)
         self.assertIsNone(employee)
         self.assertIsNotNone(task)
 
     def test_invalid_task(self):
-        employee, task = find_assignment_records(
-            self.employees, self.tasks, 999, 1
-        )
+        employee, task = find_assignment_records(self.employees, self.tasks, 999, 1)
         self.assertIsNotNone(employee)
         self.assertIsNone(task)
 
@@ -61,33 +55,28 @@ class TestAssignmentValidation(unittest.TestCase):
         ]
 
     def test_active_task_is_valid(self):
-        errors = validate_assignment_records(
-            self.employees, self.tasks, 101, 1
-        )
+        errors = validate_assignment_records(self.employees, self.tasks, 101, 1)
         self.assertEqual(errors, [])
 
     def test_completed_task_is_rejected(self):
-        errors = validate_assignment_records(
-            self.employees, self.tasks, 102, 1
-        )
+        errors = validate_assignment_records(self.employees, self.tasks, 102, 1)
         self.assertIn("Task is already completed.", errors)
 
     def test_missing_employee_is_rejected(self):
-        errors = validate_assignment_records(
-            self.employees, self.tasks, 101, 999
-        )
+        errors = validate_assignment_records(self.employees, self.tasks, 101, 999)
         self.assertIn("Employee does not exist.", errors)
 
+    def test_inactive_employee_is_rejected(self):
+        self.employees[0]["status"] = "Inactive"
+        errors = validate_assignment_records(self.employees, self.tasks, 101, 1)
+        self.assertIn("Cannot assign a task to an inactive employee.",errors)
+
     def test_missing_task_is_rejected(self):
-        errors = validate_assignment_records(
-            self.employees, self.tasks, 999, 1
-        )
+        errors = validate_assignment_records(self.employees, self.tasks, 999, 1)
         self.assertIn("Task does not exist.", errors)
 
     def test_both_records_missing(self):
-        errors = validate_assignment_records(
-            self.employees, self.tasks, 999, 999
-        )
+        errors = validate_assignment_records(self.employees, self.tasks, 999, 999)
         self.assertEqual(len(errors), 2)
 
 class TestExperienceValidation(unittest.TestCase):
@@ -262,6 +251,15 @@ class TestDeadlineCapacityValidation(unittest.TestCase):
     def test_overdue_reassignment_reduces_conflict(self):
         tasks = [self.make_task(101, 10, "2026-11-06", 1), self.make_task(102, 35, "2026-11-13", 1),]
         errors = self.check_capacity(tasks, [{"task_id": 101, "employee_id": 2}])
+        self.assertEqual(errors, {})
+
+    def test_inactive_employee_excluded_from_capacity_checks(self):
+        self.employees[1]["status"] = "Inactive"
+        tasks = [
+            self.make_task(101, 45, "2026-11-13", 2),
+            self.make_task(102, 10, "2026-11-13", 1)
+        ]
+        errors = self.check_capacity(tasks, [])
         self.assertEqual(errors, {})
 
 class TestFairnessComparison(unittest.TestCase):
@@ -545,6 +543,13 @@ class TestRecommendationValidation(unittest.TestCase):
         result = validate_recommendations(self.employees, self.tasks,[self.recommend(101, 999)])
         self.assertFalse(result["recommendations"][0]["valid"])
 
+    def test_inactive_employee_recommendation_rejected(self):
+        self.employees[0]["status"] = "Inactive"
+        result = validate_recommendations(self.employees, self.tasks, [self.recommend(101, 1)])
+        recommendation = result["recommendations"][0]
+        self.assertFalse(recommendation["valid"])
+        self.assertIn("Cannot assign a task to an inactive employee.", recommendation["errors"])
+
     def test_duplicate_recommendations_rejected(self):
         recommendations = [self.recommend(101, 1),self.recommend(101, 2)]
         result = validate_recommendations(self.employees, self.tasks, recommendations)
@@ -644,6 +649,14 @@ class TestSelectedChangesEvaluation(unittest.TestCase):
         result = self.evaluate([self.recommend(101, 2)])
         self.assertFalse(result["can_commit"])
         self.assertFalse(result["recommendations"][0]["valid"])
+
+    def test_inactive_employee_blocks_commit(self):
+        self.employees[0]["status"] = "Inactive"
+        result = self.evaluate([self.recommend(101, 1)])
+        self.assertFalse(result["can_commit"])
+        self.assertFalse(result["recommendations"][0]["valid"])
+        self.assertEqual(result["capacity_errors"], {})
+        self.assertEqual(result["fairness_warnings"], [])
 
     def test_overdue_selection_with_capacity_conflict_blocks_commit(self):
         self.tasks[0]["deadline"] = "2026-11-06"
@@ -773,19 +786,21 @@ class TestIndividualRecommendationEvaluation(unittest.TestCase):
 
     def test_fairness_warning_for_high_priority_task(self):
         result = self.evaluate(self.recommend(101, 1))
-        self.assertIn(
-            "High-priority task distribution becomes less balanced.",
-            result["fairness_warnings"]
-        )
+        self.assertIn("High-priority task distribution becomes less balanced.", result["fairness_warnings"])
 
     def test_invalid_experience_rejected(self):
         self.tasks[0]["difficulty"] = "Hard"
         result = self.evaluate(self.recommend(101, 2))
         self.assertFalse(result["valid"])
-        self.assertIn(
-            "Junior employees cannot be assigned Hard tasks.",
-            result["errors"]
-        )
+        self.assertIn("Junior employees cannot be assigned Hard tasks.", result["errors"])
+        self.assertEqual(result["capacity_errors"], {})
+        self.assertEqual(result["fairness_warnings"], [])
+
+    def test_inactive_employee_recommendation_preview(self):
+        self.employees[0]["status"] = "Inactive"
+        result = self.evaluate(self.recommend(101, 1))
+        self.assertFalse(result["valid"])
+        self.assertIn("Cannot assign a task to an inactive employee.", result["errors"])
         self.assertEqual(result["capacity_errors"], {})
         self.assertEqual(result["fairness_warnings"], [])
 
@@ -799,10 +814,7 @@ class TestIndividualRecommendationEvaluation(unittest.TestCase):
         self.tasks[0]["difficulty"] = "Medium"
         result = self.evaluate(self.recommend(101, 2))
         self.assertTrue(result["valid"])
-        self.assertIn(
-            "Junior employee assigned a Medium task.",
-            result["warnings"]
-        )
+        self.assertIn("Junior employee assigned a Medium task.", result["warnings"])
 
     def test_already_applied_recommendation(self):
         recommendation = self.recommend(101, 1)
