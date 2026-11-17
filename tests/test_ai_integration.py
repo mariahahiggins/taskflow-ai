@@ -247,6 +247,7 @@ class TestEvaluateAIBatch(unittest.TestCase):
         )
 
 
+@patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"})
 class TestGenerateTaskRecommendations(unittest.TestCase):
     def setUp(self):
         self.task_information = json.dumps({
