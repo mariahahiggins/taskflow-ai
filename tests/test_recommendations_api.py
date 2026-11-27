@@ -14,6 +14,7 @@ from google.genai import errors as genai_errors
 
 from backend import database
 from backend.main import app
+from backend.models import MAX_SQLITE_ID
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +154,174 @@ class TestGenerateRecommendationsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertIn("invalid recommendation format", response.json()["detail"])
 
+    def test_malformed_gemini_response_structures(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = {
+            "task_id": task["task_id"],
+            "employee_id": employee["employee_id"],
+            "reason": "Suitable assignment.",
+        }
+
+        invalid_responses = [
+            None,
+            [],
+            "",
+            123,
+            {},
+            {"recommendations": None},
+            {"recommendations": ""},
+            {"recommendations": {}},
+            {"recommendations": valid},
+            {"recommendations": 123},
+            {"recommendations": True},
+            {"recommendations": [None]},
+            {"recommendations": ["invalid"]},
+            {"recommendations": [{}]},
+            {"recommendations": [valid, {}]},
+            {"recommendations": [{**valid, "unexpected": True}]},
+            {"recommendations": [], "unexpected": True},
+        ]
+
+        for result in invalid_responses:
+            with self.subTest(result=result):
+                with patch(
+                    "backend.main.ai_integration.generate_task_recommendations",
+                    return_value=result,
+                ):
+                    response = self.client.post("/recommendations")
+
+                self.assertEqual(
+                    response.status_code, 502, response.text
+                )
+                self.assertEqual(
+                    response.json()["detail"],
+                    "Gemini returned an invalid recommendation format."
+                )
+                self.assertEqual(
+                    self.client.get("/tasks").json(), [task]
+                )
+
+    def test_empty_gemini_recommendation_list_accepted(self):
+        self.create_employee()
+        task = self.create_task()
+
+        with self.mock_gemini([]):
+            response = self.client.post("/recommendations")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json(), {"recommendations": []}
+        )
+        self.assertEqual(
+            self.client.get("/tasks").json(), [task]
+        )
+
+    def test_invalid_gemini_recommendation_reasons(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        invalid_reasons = [
+            "",
+            "   ",
+            "A" * 2001,
+            "Invalid\x00reason",
+            "Invalid\x1breason",
+            "Invalid\x7freason",
+            "Invalid\x85reason",
+            123,
+            True,
+            None,
+            [],
+            {},
+        ]
+
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                recommendation = {
+                    "task_id": task["task_id"],
+                    "employee_id": employee["employee_id"],
+                    "reason": reason,
+                }
+
+                with self.mock_gemini([recommendation]):
+                    response = self.client.post("/recommendations")
+
+                self.assertEqual(
+                    response.status_code, 502, response.text
+                )
+                self.assertEqual(
+                    response.json()["detail"],
+                    "Gemini returned an invalid recommendation format."
+                )
+                self.assertEqual(
+                    self.client.get("/tasks").json(), [task]
+                )
+
+    def test_valid_recommendation_reason_boundaries(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid_reasons = [
+            "A",
+            "A" * 2000,
+            "The employee has sufficient capacity.",
+            "Suitable experience.\nAvailable capacity.",
+            "Experience:\tSenior",
+            "Experience matches the task – résumé review.",
+            "適切な経験があります。",
+        ]
+
+        for reason in valid_reasons:
+            with self.subTest(reason=reason):
+                recommendation = {
+                    "task_id": task["task_id"],
+                    "employee_id": employee["employee_id"],
+                    "reason": reason,
+                }
+
+                with self.mock_gemini([recommendation]):
+                    response = self.client.post("/recommendations")
+
+                self.assertEqual(
+                    response.status_code, 200, response.text
+                )
+
+                result = response.json()["recommendations"][0]
+
+                self.assertTrue(result["valid"])
+                self.assertEqual(result["reason"], reason)
+
+                preview = self.client.post(
+                    "/recommendations/preview",
+                    json={
+                        "recommendation": recommendation,
+                        "selected_recommendations": [],
+                    },
+                )
+
+                self.assertEqual(
+                    preview.status_code, 200, preview.text
+                )
+                self.assertEqual(preview.json()["reason"], reason)
+
+                evaluation = self.client.post(
+                    "/recommendations/evaluate",
+                    json={
+                        "selected_recommendations": [recommendation]
+                    },
+                )
+
+                self.assertEqual(
+                    evaluation.status_code, 200, evaluation.text
+                )
+                self.assertTrue(evaluation.json()["can_commit"])
+
+                self.assertEqual(
+                    self.client.get("/tasks").json(), [task]
+                )
+
     def test_invalid_gemini_json(self):
         self.create_employee()
         self.create_task()
@@ -277,6 +446,49 @@ class TestGenerateRecommendationsAPI(unittest.TestCase):
             [employee["employee_id"] for employee in task_information["employees"]],
             [active["employee_id"]]
         )
+
+    def test_invalid_gemini_recommendation_ids(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = {
+            "task_id": task["task_id"],
+            "employee_id": employee["employee_id"],
+            "reason": "Suitable assignment.",
+        }
+
+        invalid_ids = [
+            0,
+            -1,
+            MAX_SQLITE_ID + 1,
+            10**100,
+            1.0,
+            1.5,
+            "1",
+            True,
+            None,
+            [],
+            {},
+        ]
+
+        for field in ("task_id", "employee_id"):
+            for value in invalid_ids:
+                with self.subTest(field=field, value=value):
+                    recommendation = {**valid, field: value}
+
+                    with self.mock_gemini([recommendation]):
+                        response = self.client.post("/recommendations")
+
+                    self.assertEqual(
+                        response.status_code, 502, response.text
+                    )
+                    self.assertEqual(
+                        response.json()["detail"],
+                        "Gemini returned an invalid recommendation format."
+                    )
+                    self.assertEqual(
+                        self.client.get("/tasks").json(), [task]
+                    )
 
 
 class TestPreviewRecommendationAPI(unittest.TestCase):
@@ -480,6 +692,68 @@ class TestPreviewRecommendationAPI(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_invalid_recommendation_reasons_across_endpoints(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = self.recommend(task, employee)
+
+        invalid_reasons = [
+            "",
+            "   ",
+            "A" * 2001,
+            "Invalid\x00reason",
+            "Invalid\x1breason",
+            "Invalid\x7freason",
+            "Invalid\x85reason",
+            123,
+            True,
+            None,
+            [],
+            {},
+        ]
+
+        for reason in invalid_reasons:
+            invalid = {**valid, "reason": reason}
+
+            requests = [
+                (
+                    "/recommendations/preview",
+                    {
+                        "recommendation": invalid,
+                        "selected_recommendations": [],
+                    },
+                ),
+                (
+                    "/recommendations/preview",
+                    {
+                        "recommendation": valid,
+                        "selected_recommendations": [invalid],
+                    },
+                ),
+                (
+                    "/recommendations/evaluate",
+                    {"selected_recommendations": [invalid]},
+                ),
+                (
+                    "/recommendations/approve",
+                    {"selected_recommendations": [invalid]},
+                ),
+            ]
+
+            for endpoint, payload in requests:
+                with self.subTest(endpoint=endpoint, reason=reason):
+                    response = self.client.post(
+                        endpoint, json=payload
+                    )
+
+                    self.assertEqual(
+                        response.status_code, 422, response.text
+                    )
+                    self.assertEqual(
+                        self.client.get("/tasks").json(), [task]
+                    )
+
     def test_missing_database_returns_503(self):
         missing = self.database_path.with_name("missing.db")
         employee = self.create_employee()
@@ -518,6 +792,176 @@ class TestPreviewRecommendationAPI(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertFalse(result["applied"])
         self.assertTrue(result["errors"])
+
+    def test_invalid_recommendation_ids_across_endpoints(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = self.recommend(task, employee)
+
+        invalid_ids = [
+            0,
+            -1,
+            MAX_SQLITE_ID + 1,
+            10**100,
+            1.0,
+            1.5,
+            "1",
+            True,
+            None,
+            [],
+            {},
+        ]
+
+        for field in ("task_id", "employee_id"):
+            for value in invalid_ids:
+                invalid = {**valid, field: value}
+
+                requests = [
+                    (
+                        "/recommendations/preview",
+                        {
+                            "recommendation": invalid,
+                            "selected_recommendations": [],
+                        },
+                    ),
+                    (
+                        "/recommendations/preview",
+                        {
+                            "recommendation": valid,
+                            "selected_recommendations": [invalid],
+                        },
+                    ),
+                    (
+                        "/recommendations/evaluate",
+                        {"selected_recommendations": [invalid]},
+                    ),
+                    (
+                        "/recommendations/approve",
+                        {"selected_recommendations": [invalid]},
+                    ),
+                ]
+
+                for endpoint, payload in requests:
+                    with self.subTest(
+                        endpoint=endpoint, field=field, value=value
+                    ):
+                        response = self.client.post(
+                            endpoint, json=payload
+                        )
+
+                        self.assertEqual(
+                            response.status_code, 422, response.text
+                        )
+                        self.assertEqual(
+                            self.client.get("/tasks").json(), [task]
+                        )
+
+    def test_malformed_recommendation_request_structures(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = self.recommend(task, employee)
+
+        invalid_selections = [
+            None,
+            "",
+            {},
+            valid,
+            123,
+            True,
+            [None],
+            ["invalid"],
+            [{}],
+            [valid, {}],
+            [{**valid, "unexpected": True}],
+        ]
+
+        for selection in invalid_selections:
+            requests = [
+                (
+                    "/recommendations/preview",
+                    {
+                        "recommendation": valid,
+                        "selected_recommendations": selection,
+                    },
+                ),
+                (
+                    "/recommendations/evaluate",
+                    {"selected_recommendations": selection},
+                ),
+                (
+                    "/recommendations/approve",
+                    {"selected_recommendations": selection},
+                ),
+            ]
+
+            for endpoint, payload in requests:
+                with self.subTest(
+                    endpoint=endpoint, selection=selection
+                ):
+                    response = self.client.post(
+                        endpoint, json=payload
+                    )
+
+                    self.assertEqual(
+                        response.status_code, 422, response.text
+                    )
+                    self.assertEqual(
+                        self.client.get("/tasks").json(), [task]
+                    )
+
+    def test_missing_and_unexpected_recommendation_fields(self):
+        employee = self.create_employee()
+        task = self.create_task()
+
+        valid = self.recommend(task, employee)
+
+        requests = [
+            ("/recommendations/preview", {}),
+            (
+                "/recommendations/preview",
+                {"recommendation": valid},
+            ),
+            (
+                "/recommendations/preview",
+                {"selected_recommendations": []},
+            ),
+            (
+                "/recommendations/preview",
+                {
+                    "recommendation": valid,
+                    "selected_recommendations": [],
+                    "unexpected": True,
+                },
+            ),
+        ]
+
+        for endpoint in (
+            "/recommendations/evaluate",
+            "/recommendations/approve",
+        ):
+            requests.extend([
+                (endpoint, {}),
+                (
+                    endpoint,
+                    {
+                        "selected_recommendations": [valid],
+                        "unexpected": True,
+                    },
+                ),
+            ])
+
+        for endpoint, payload in requests:
+            with self.subTest(endpoint=endpoint, payload=payload):
+                response = self.client.post(endpoint, json=payload)
+
+                self.assertEqual(
+                    response.status_code, 422, response.text
+                )
+                self.assertEqual(
+                    self.client.get("/tasks").json(), [task]
+                )
 
 
 class TestEvaluateRecommendationsAPI(unittest.TestCase):

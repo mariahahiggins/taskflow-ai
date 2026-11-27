@@ -3,10 +3,10 @@ import pandas as pd
 from datetime import date, timedelta
 import sys
 from pathlib import Path
+import requests
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-import requests
 from frontend.api_client import (
     get_employees,
     create_employee,
@@ -18,7 +18,8 @@ from frontend.api_client import (
     generate_recommendations,
     preview_recommendation,
     evaluate_recommendations,
-    approve_recommendations
+    approve_recommendations,
+    get_error_message
 )
 
 st.set_page_config(
@@ -42,7 +43,7 @@ try:
     ]
 
 except Exception as error:
-    st.error(f"Could not load employees from the backend: {error}")
+    st.error(f"Could not load employees: {get_error_message(error)}")
     if "employees" not in st.session_state:
         st.session_state.employees = []
 
@@ -70,7 +71,7 @@ try:
     ]
 
 except Exception as error:
-    st.error(f"Could not load tasks from the backend: {error}")
+    st.error(f"Could not load tasks: {get_error_message(error)}")
 
     if "tasks" not in st.session_state:
         st.session_state.tasks = []
@@ -117,7 +118,7 @@ with dashboard:
     try:
         workload_data = get_workloads()
     except requests.exceptions.RequestException as error:
-        st.error(f"Could not load workload data: {error}")
+        st.error(f"Could not load workload data: {get_error_message(error)}")
         st.stop()
 
     col1, col2, col3, col4 = st.columns(4)
@@ -255,22 +256,25 @@ with dashboard:
             st.session_state.recommendations = result["recommendations"]
             st.session_state.selected_recommendations = []
 
-        except requests.exceptions.RequestException as error:
-            if error.response is not None:
-                try:
-                    detail = error.response.json().get("detail", str(error))
-                except ValueError:
-                    detail = str(error)
+            if not result["recommendations"]:
+                st.info("No assignment recommendations were generated.")
 
-                st.error(f"Could not generate recommendations: {detail}")
-            else:
-                st.error(f"Could not connect to the backend: {error}")
+        except requests.exceptions.RequestException as error:
+            st.error(
+                f"Could not generate recommendations: {get_error_message(error)}"
+            )
 
     
     if "recommendations" in st.session_state:
 
-        employees = get_employees()
-        db_tasks = get_tasks()
+        try:
+            employees = get_employees()
+            db_tasks = get_tasks()
+        except requests.exceptions.RequestException as error:
+            st.error(
+                f"Could not load recommendation data: {get_error_message(error)}"
+            )
+            st.stop()
 
         employee_lookup = {
             employee["employee_id"]: employee
@@ -471,7 +475,7 @@ with dashboard:
                 })
 
             except requests.exceptions.RequestException as error:
-                st.error(f"Could not evaluate selected changes: {error}")
+                st.error(f"Could not evaluate selected changes: {get_error_message(error)}")
 
             # Display combined evaluation results
             if evaluation is not None:
@@ -563,7 +567,7 @@ with dashboard:
                     st.rerun()
 
                 except requests.exceptions.RequestException as error:
-                    st.error(f"Could not approve changes: {error}")
+                    st.error(f"Could not approve changes: {get_error_message(error)}")
 
             st.caption(
                 f"{len(selected)} recommendation(s) selected. "
@@ -621,13 +625,14 @@ with employees_tab:
 
     with st.expander("Add Employee"):
         with st.form("employee_form"):
-            name = st.text_input("Employee Name")
+            name = st.text_input("Employee Name", max_chars=100)
 
             hours = st.number_input(
                 "Available Hours per Week",
-                min_value=1,
-                max_value=168,
-                value=40
+                min_value=0.0,
+                max_value=168.0,
+                value=40.0,
+                step=0.5
             )
 
             experience = st.selectbox(
@@ -663,7 +668,7 @@ with employees_tab:
                         st.rerun()
 
                     except Exception as error:
-                        st.error(f"Could not add employee: {error}")
+                        st.error(f"Could not add employee: {get_error_message(error)}")
 
 
     # Edit employees
@@ -694,14 +699,16 @@ with employees_tab:
 
                     edited_name = st.text_input(
                         "Employee Name",
-                        value=employee_to_edit["Name"]
+                        value=employee_to_edit["Name"],
+                        max_chars=100
                     )
 
                     edited_hours = st.number_input(
                         "Available Hours per Week",
-                        min_value=1,
-                        max_value=168,
-                        value=int(employee_to_edit["Available Hours"])
+                        min_value=0.0,
+                        max_value=168.0,
+                        value=float(employee_to_edit["Available Hours"]),
+                        step=0.5
                     )
 
                     edited_experience = st.selectbox(
@@ -744,7 +751,7 @@ with employees_tab:
                                 st.rerun()
 
                             except Exception as error:
-                                st.error(f"Could not update employee: {error}")
+                                st.error(f"Could not update employee: {get_error_message(error)}")
 
         else:
             st.info("No employees available to edit.")
@@ -786,14 +793,16 @@ with tasks_tab:
 
                     edited_title = st.text_input(
                         "Task Name",
-                        value=task_to_edit["Task"]
+                        value=task_to_edit["Task"],
+                        max_chars=200
                     )
 
                     edited_hours = st.number_input(
                         "Estimated Hours",
-                        min_value=1,
-                        max_value=1000,
-                        value=int(task_to_edit["Hours"])
+                        min_value=0.0,
+                        max_value=8760.0,
+                        value=float(task_to_edit["Hours"]),
+                        step=0.5
                     )
 
                     edited_deadline = st.date_input(
@@ -849,6 +858,8 @@ with tasks_tab:
                     if save_task:
                         if not edited_title.strip():
                             st.error("Please enter a task name.")
+                        elif edited_hours <= 0:
+                            st.error("Estimated hours must be greater than zero.")
                         else:
                             employee_id = next(
                                 (
@@ -875,19 +886,20 @@ with tasks_tab:
                                 st.rerun()
 
                             except Exception as error:
-                                st.error(f"Could not update task: {error}")
+                                st.error(f"Could not update task: {get_error_message(error)}")
         else:
             st.info("No tasks available to edit.")
 
 
     with st.expander("Add Task"):
         with st.form("task_form"):
-            title = st.text_input("Task Name")
+            title = st.text_input("Task Name", max_chars=200)
             hours = st.number_input(
                 "Estimated Hours",
-                min_value=1,
-                max_value=1000,
-                value=8
+                min_value=0.0,
+                max_value=8760.0,
+                value=8.0,
+                step=0.5
             )
             deadline = st.date_input(
                 "Due Date",
@@ -912,6 +924,8 @@ with tasks_tab:
             if submitted:
                 if not title.strip():
                     st.error("Enter a task name.")
+                elif hours <= 0:
+                    st.error("Estimated hours must be greater than zero.")
                 else:
                     employee_id = next(
                         (
@@ -939,4 +953,4 @@ with tasks_tab:
                         st.rerun()
 
                     except Exception as error:
-                        st.error(f"Could not add task: {error}")
+                        st.error(f"Could not add task: {get_error_message(error)}")

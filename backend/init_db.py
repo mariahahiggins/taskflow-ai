@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 from contextlib import closing
+import os
 
 backend_dir = Path(__file__).resolve().parent
 
@@ -12,6 +13,12 @@ schema_path = backend_dir / "schema.sql"
 
 def initialize_database():
     """Create the database tables without removing existing data."""
+
+    # Restrict database permissions on POSIX systems.
+    if os.name == "posix":
+        database_path.touch(mode=0o600, exist_ok=True)
+        database_path.chmod(0o600)
+
     with closing(sqlite3.connect(database_path)) as connection:
         with connection:
             connection.execute("PRAGMA foreign_keys = ON")

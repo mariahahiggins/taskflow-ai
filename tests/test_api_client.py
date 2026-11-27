@@ -201,5 +201,128 @@ class TestAPIClient(unittest.TestCase):
         with self.assertRaises(requests.Timeout):
             api_client.generate_recommendations()
 
+
+class TestAPIErrorMessages(unittest.TestCase):
+    """Verify safe, user-friendly API error messages."""
+
+    def make_http_error(self, status, body=None):
+        response = Mock()
+        response.status_code = status
+        response.json.return_value = body
+
+        return requests.HTTPError(
+            "Sensitive internal error details",
+            response=response
+        )
+
+    def test_timeout_message(self):
+        error = requests.Timeout("Sensitive timeout details")
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "The request timed out. Please try again."
+        )
+
+    def test_connection_error_message(self):
+        error = requests.ConnectionError("Sensitive connection details")
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "Could not connect to the backend. Ensure the application is running."
+        )
+
+    def test_http_error_messages(self):
+        cases = {
+            400: "The request could not be completed. Check the submitted information.",
+            404: "The requested record could not be found.",
+            409: "The data has changed. Refresh and try again.",
+            422: "Invalid input. Check the submitted values and try again.",
+            502: "The AI service could not provide a valid response. Please try again.",
+            500: "An internal service error occurred. Please try again.",
+            504: "An internal service error occurred. Please try again."
+        }
+
+        for status, expected in cases.items():
+            with self.subTest(status=status):
+                error = self.make_http_error(
+                    status,
+                    {"detail": "Sensitive backend information"}
+                )
+
+                self.assertEqual(
+                    api_client.get_error_message(error),
+                    expected
+                )
+
+    def test_missing_gemini_key_message(self):
+        error = self.make_http_error(
+            503,
+            {"detail": "Gemini API key is not configured."}
+        )
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "The Gemini API key is not configured."
+        )
+
+    def test_service_unavailable_message(self):
+        error = self.make_http_error(
+            503,
+            {"detail": "Sensitive database information"}
+        )
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "A required service is currently unavailable."
+        )
+
+    def test_non_json_error_response(self):
+        error = self.make_http_error(503)
+        error.response.json.side_effect = ValueError(
+            "Invalid JSON"
+        )
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "A required service is currently unavailable."
+        )
+
+    def test_unexpected_error_response_structures(self):
+        for body in [None, [], "error", 123, {}]:
+            with self.subTest(body=body):
+                error = self.make_http_error(503, body)
+
+                self.assertEqual(
+                    api_client.get_error_message(error),
+                    "A required service is currently unavailable."
+                )
+
+    def test_http_error_without_response(self):
+        error = requests.HTTPError("Sensitive error details")
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "An unexpected error occurred. Please try again."
+        )
+
+    def test_unrecognized_http_status(self):
+        for status in [401, 403, 429]:
+            with self.subTest(status=status):
+                error = self.make_http_error(status)
+
+                self.assertEqual(
+                    api_client.get_error_message(error),
+                    "An unexpected error occurred. Please try again."
+                )
+
+    def test_unexpected_exception_message(self):
+        error = RuntimeError("Sensitive internal information")
+
+        self.assertEqual(
+            api_client.get_error_message(error),
+            "An unexpected error occurred. Please try again."
+        )
+
+        
 if __name__ == "__main__":
     unittest.main()
