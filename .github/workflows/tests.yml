@@ -1,4 +1,4 @@
-name: TaskFlow AI Tests
+name: TaskFlow AI CI/CD
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m coverage run --source=backend,frontend -m unittest discover -s tests -v
+           python -m coverage run --source=backend,frontend,setup,run -m unittest discover -s tests -v
 
       - name: Generate coverage reports
         run: |
@@ -74,7 +74,7 @@ jobs:
       - name: Scan application source code
         if: success() || failure()
         run: |
-          python -m bandit -r backend frontend 2>&1 | tee bandit-report.txt
+          python -m bandit -r backend frontend setup.py run.py 2>&1 | tee bandit-report.txt
 
       - name: Upload security reports
         if: always()
@@ -84,4 +84,145 @@ jobs:
           path: |
             pip-audit-report.txt
             bandit-report.txt
-            
+
+  deploy:
+    name: Deploy to Test Environment
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install TaskFlow AI
+        run: |
+          python setup.py --seed
+
+      - name: Deploy application and run smoke tests
+        run: |
+          # Start the application in the background.
+          env --default-signal=INT python -u run.py > deployment.log 2>&1 &
+          APP_PID=$!
+
+          # Stop the application when this step finishes.
+          cleanup() {
+            kill -INT "$APP_PID" 2>/dev/null || true
+            wait "$APP_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Wait for both application services.
+          READY=false
+
+          for attempt in {1..60}; do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "Application exited during startup."
+              cat deployment.log
+              exit 1
+            fi
+
+            if curl --fail --silent --max-time 2 \
+              http://127.0.0.1:8000/health > /dev/null &&
+              curl --fail --silent --max-time 2 \
+              http://127.0.0.1:8501/_stcore/health > /dev/null; then
+              READY=true
+              break
+            fi
+
+            sleep 1
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "Application failed to become ready."
+            cat deployment.log
+            exit 1
+          fi
+
+          # Verify deployed API endpoints.
+          curl --fail --silent --show-error \
+            http://127.0.0.1:8000/health > health.json
+
+          curl --fail --silent --show-error \
+            http://127.0.0.1:8000/employees > employees.json
+
+          curl --fail --silent --show-error \
+            http://127.0.0.1:8000/tasks > tasks.json
+
+          curl --fail --silent --show-error \
+            http://127.0.0.1:8000/workloads > workloads.json
+
+          # Validate the deployed application's responses.
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def load(filename):
+              return json.loads(
+                  Path(filename).read_text(encoding="utf-8")
+              )
+
+          assert load("health.json") == {"status": "ok"}
+          print("PASS: Backend health check")
+
+          employees = load("employees.json")
+          assert len(employees) == 3
+          assert {employee["name"] for employee in employees} == {
+              "Sarah", "James", "Alex"
+          }
+          print("PASS: Employee API and sample data")
+
+          tasks = load("tasks.json")
+          assert len(tasks) == 6
+          assert sum(
+              task["employee_id"] is None for task in tasks
+          ) == 1
+          print("PASS: Task API and sample data")
+
+          workloads = load("workloads.json")
+          assert isinstance(workloads, dict)
+          assert workloads
+          print("PASS: Workload API")
+
+          print("PASS: Streamlit frontend health check")
+          print("All deployment smoke tests passed.")
+          PY
+
+          echo "TaskFlow AI deployed successfully."
+
+      - name: Upload deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deployment-evidence
+          path: |
+            deployment.log
+            health.json
+            employees.json
+            tasks.json
+            workloads.json
+
+      - name: Create distribution package
+        run: |
+          mkdir -p dist
+          git archive \
+            --format=zip \
+            --prefix=taskflow-ai/ \
+            --output=dist/taskflow-ai.zip \
+            HEAD
+
+      - name: Upload distribution package
+        uses: actions/upload-artifact@v6
+        with:
+          name: taskflow-ai-distribution
+          path: dist/taskflow-ai.zip

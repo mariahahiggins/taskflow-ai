@@ -1,36 +1,64 @@
-from pathlib import Path
-import sqlite3
+"""Safely reset the TaskFlow AI database."""
 
-# Locate the backend folder and database files
+import sqlite3
+import sys
+from pathlib import Path
+from contextlib import closing
+from tempfile import TemporaryDirectory
+
 backend_dir = Path(__file__).resolve().parent
 database_path = backend_dir / "taskflow.db"
 schema_path = backend_dir / "schema.sql"
 
-# Confirm before deleting any data
-confirmation = input(
-    "WARNING: This will delete all local database data. "
-    "Type RESET to continue: "
-)
 
-if confirmation != "RESET":
-    print("Database reset cancelled.")
-else:
-    # Ensure the schema exists before deleting the database
+def reset_database():
+    """Replace the existing database with an empty database."""
+
     if not schema_path.is_file():
-        print("Error: schema.sql was not found.")
-    else:
-        # Remove the existing database
-        if database_path.exists():
-            database_path.unlink()
+        raise FileNotFoundError("schema.sql was not found.")
 
-        # Recreate the database and its tables
-        connection = sqlite3.connect(database_path)
+    schema = schema_path.read_text(encoding="utf-8")
 
-        try:
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.executescript(
-                schema_path.read_text(encoding="utf-8")
-            )
-            print("TaskFlow AI database reset successfully!")
-        finally:
-            connection.close()
+    # Create a replacement before modifying the existing database.
+    with TemporaryDirectory(dir=database_path.parent) as temp_dir:
+        replacement_path = Path(temp_dir) / "taskflow.db"
+
+        with closing(sqlite3.connect(replacement_path)) as connection:
+            with connection:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.executescript(schema)
+
+        # Replace the original only after successful initialization.
+        replacement_path.replace(database_path)
+
+    print("TaskFlow AI database reset successfully!")
+
+
+def main():
+    """Confirm and execute the database reset."""
+
+    try:
+        confirmation = input(
+            "WARNING: Stop TaskFlow AI before resetting. "
+            "This will delete all local database data. "
+            "Type RESET to continue: "
+        )
+
+        if confirmation != "RESET":
+            print("Database reset cancelled.")
+            return 0
+
+        reset_database()
+        return 0
+
+    except (KeyboardInterrupt, EOFError):
+        print("\nDatabase reset cancelled.")
+        return 0
+
+    except (OSError, sqlite3.Error):
+        print("Database reset failed. Review the database and schema files.")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
