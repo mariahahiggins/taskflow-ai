@@ -1,8 +1,4 @@
-"""Comprehensive tests for TaskFlow AI's SQLite database operations.
-
-Run from the repository root:
-    python -m unittest discover -s tests -v
-"""
+"""Comprehensive tests for TaskFlow AI's SQLite database operations."""
 
 import sqlite3
 import tempfile
