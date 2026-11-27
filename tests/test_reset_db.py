@@ -7,6 +7,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from contextlib import closing
+import os
+import stat
 
 from backend import init_db, database, reset_db
 
@@ -291,6 +293,17 @@ class TestDatabaseReset(unittest.TestCase):
 
         self.assertEqual(context.exception.code, 0)
         mock_connect.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permissions only")
+    def test_reset_database_has_restricted_permissions(self):
+        """Reset replaces the database with an owner-only file."""
+        self.db_path.chmod(0o644)
+
+        reset_db.reset_database()
+
+        permissions = stat.S_IMODE(self.db_path.stat().st_mode)
+
+        self.assertEqual(permissions, 0o600)
 
 
 if __name__ == "__main__":

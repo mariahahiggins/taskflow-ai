@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from google import genai
 from datetime import date
 from backend import assignment
+from backend.models import GeneratedRecommendations
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -170,7 +171,7 @@ Assignment requirements:
 - Identify ALL unassigned tasks.
 - Evaluate each identified problem for reassignment independently. Do not stop after finding one or two improvements.
 - Prioritize correcting these problems when suitable employees have capacity.
-- If a problem cannot be corrected without worsening capacity conflicts, leave it unchanged and explain why in debug_reason.
+- If a problem cannot be corrected without worsening capacity conflicts, leave it unchanged.
 - Next, consider overloaded employees and approaching deadlines.
 - Finally, consider optional workload balancing and fairness.
 - Prefer suitable employees with sufficient capacity and lighter workloads.
@@ -201,8 +202,7 @@ Return the results in this JSON format:
             "employee_id": 2,
             "reason": "Explain the assignment using employee names."
         }}
-    ],
-    "debug_reason": "Explain the overall recommendation decisions."
+    ]
 }}
 
 Return JSON only. Do not include extra text.
@@ -213,17 +213,6 @@ task_id, employee_id, and reason.
 Do not include employee names as separate fields.
 Employee names belong only inside the reason string.
 Do not add any other fields to recommendation objects.
-
-If recommendations is empty, explain:
-- Which tasks you considered for reassignment.
-- Why each potential reassignment was rejected.
-- Whether experience, capacity, deadlines, or fairness prevented it.
-- Whether you could not find a suitable employee.
-
-If recommendations is not empty, briefly explain why you selected
-those recommendations.
-
-The debug_reason field must be a string.
 
 """
 
@@ -238,17 +227,26 @@ The debug_reason field must be a string.
         response = client.models.generate_content(
             model="gemini-3.5-flash-lite",
             contents=contents,
-            config={"response_mime_type": "application/json"}
+            config={
+                "response_mime_type": "application/json",
+            }
         )
-        return json.loads(response.text)
+
+        result = json.loads(response.text)
+        validated = GeneratedRecommendations.model_validate(result)
+
+        return validated.model_dump()
 
     # First call: Gemini proposes assignments.
     first_result = ask_gemini(prompt)
 
-    print("\n--- INITIAL GEMINI RESPONSE ---")
-    print(json.dumps(first_result, indent=4))
+    first_recommendations = first_result["recommendations"]
 
-    first_recommendations = first_result.get("recommendations", [])
+    print(
+        f"AI: Initial response validated. "
+        f"Recommendations: {len(first_recommendations)}",
+        flush=True
+    )
 
     feedback = evaluate_ai_batch(
         employees, tasks, first_recommendations,
@@ -269,6 +267,17 @@ The debug_reason field must be a string.
         or bool(feedback["unresolved_tasks"])
         or bool(feedback["same_employee_task_ids"])
         or bool(feedback["duplicate_task_ids"])
+    )
+
+    print(
+        f"AI: Initial verification - "
+        f"Invalid recommendations: {has_invalid_recommendations}, "
+        f"Capacity conflicts: {bool(feedback['capacity_errors'])}, "
+        f"Unresolved tasks: {len(feedback['unresolved_tasks'])}, "
+        f"Same-employee assignments: {len(feedback['same_employee_task_ids'])}, "
+        f"Duplicate tasks: {len(feedback['duplicate_task_ids'])}, "
+        f"Revision needed: {needs_revision}",
+        flush=True
     )
 
     final_result = first_result
@@ -297,7 +306,7 @@ Revise your COMPLETE recommendation batch.
   employee has available hours.
 - Evaluate the cumulative capacity effects of the complete batch.
 - Do not assign Junior employees to Hard tasks.
-- If an unresolved task cannot be reassigned feasibly, explain why.
+- If an unresolved task cannot be reassigned feasibly, leave it unchanged.
 - Fairness warnings are advisory, not automatic rejection criteria.
 - Return only recommendations for eligible Active tasks.
 - Do not recommend assigning a task to its current employee.
@@ -315,8 +324,7 @@ Return JSON only in this format:
             "employee_id": 2,
             "reason": "Explain the assignment using employee names."
         }}
-    ],
-    "debug_reason": "Explain your revised decisions."
+    ]
 }}
 
 Each recommendation must contain exactly task_id, employee_id, and reason.
@@ -324,27 +332,42 @@ Return the complete revised batch, not just the changes.
 """
 
         try:
+            print("AI: Requesting revised recommendations.", flush=True)
+
             final_result = ask_gemini(revision_prompt)
 
-            print("\n--- REVISED GEMINI RESPONSE ---")
-            print(json.dumps(final_result, indent=4))
+            print(
+                "AI: Revised response passed structural validation.",
+                flush=True
+            )
 
-        except Exception as error:
-            print(f"\nGemini revision unavailable: {error}")
-            print("Using the initial recommendations for validation.")
+        except Exception:
+            print(
+                "AI: Revision failed. Using initial recommendations for final verification.",
+                flush=True
+            )
             final_result = first_result
 
 
     # Validate the final result again.
-    final_recommendations = final_result.get("recommendations", [])
+    final_recommendations = final_result["recommendations"]
 
     final_feedback = evaluate_ai_batch(
         employees, tasks, final_recommendations,
         eligible_task_ids, today
     )
 
-    print("\n--- FINAL VALIDATION ---")
-    print(json.dumps(final_feedback, indent=4))
+    print(
+        f"AI: Final verification - "
+        f"Recommendations: {len(final_recommendations)}, "
+        f"Invalid assignments: "
+        f"{sum(not rec['valid'] for rec in final_feedback['recommendation_validation'])}, "
+        f"Ineligible tasks: {len(final_feedback['invalid_task_ids'])}, "
+        f"Capacity conflicts: {bool(final_feedback['capacity_errors'])}, "
+        f"Unresolved tasks: {len(final_feedback['unresolved_tasks'])}, "
+        f"Fairness warnings: {len(final_feedback['fairness_warnings'])}",
+        flush=True
+    )
 
     return final_result
 

@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from contextlib import closing
 import runpy
+import os
+import stat
 
 from backend import init_db, database
 
@@ -108,28 +110,24 @@ class TestDatabaseInitialization(unittest.TestCase):
         """Direct script execution initializes the database."""
         script_path = Path(init_db.__file__).resolve()
 
-        with patch(
-            "sqlite3.connect",
-            wraps=sqlite3.connect,
-        ) as mock_connect:
-            # Redirect the connection to the isolated test database.
-            real_connect = sqlite3.connect
+        isolated_script = Path(self.temp_dir.name) / "init_db.py"
+        isolated_schema = Path(self.temp_dir.name) / "schema.sql"
 
-            with patch.object(
-                mock_connect,
-                "side_effect",
-                lambda *args, **kwargs: mock_connect._mock_wraps(
-                    self.db_path, **kwargs
-                ),
-            ):
-                runpy.run_path(
-                    str(script_path),
-                    run_name="__main__",
-                )
+        isolated_script.write_bytes(script_path.read_bytes())
+        isolated_schema.write_bytes(init_db.schema_path.read_bytes())
 
-        self.assertTrue(self.db_path.exists())
-        self.assertEqual(database.get_employees(), [])
-        self.assertEqual(database.get_tasks(), [])
+        runpy.run_path(
+            str(isolated_script),
+            run_name="__main__",
+        )
+
+        created_database = Path(self.temp_dir.name) / "taskflow.db"
+
+        self.assertTrue(created_database.exists())
+
+        with patch.object(database, "DATABASE_PATH", created_database):
+            self.assertEqual(database.get_employees(), [])
+            self.assertEqual(database.get_tasks(), [])
 
     def test_missing_schema_file(self):
         """Initialization fails if the schema is missing."""
@@ -171,7 +169,27 @@ class TestDatabaseInitialization(unittest.TestCase):
             with self.assertRaises(sqlite3.OperationalError):
                 init_db.initialize_database()
 
-        self.assertFalse(self.db_path.exists())
+        if os.name == "posix":
+            self.assertTrue(self.db_path.exists())
+            self.assertEqual(self.db_path.stat().st_size, 0)
+        else:
+            self.assertFalse(self.db_path.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permissions only")
+    def test_new_database_has_restricted_permissions(self):
+        """New databases permit only owner read/write access."""
+        init_db.initialize_database()
+        permissions = stat.S_IMODE(self.db_path.stat().st_mode)
+        self.assertEqual(permissions, 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permissions only")
+    def test_existing_database_permissions_are_corrected(self):
+        """Initialization restricts existing database permissions."""
+        init_db.initialize_database()
+        self.db_path.chmod(0o644)
+        init_db.initialize_database()
+        permissions = stat.S_IMODE(self.db_path.stat().st_mode)
+        self.assertEqual(permissions, 0o600)
 
 
 if __name__ == "__main__":

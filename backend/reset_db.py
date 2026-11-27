@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from contextlib import closing
 from tempfile import TemporaryDirectory
+import os
 
 backend_dir = Path(__file__).resolve().parent
 database_path = backend_dir / "taskflow.db"
@@ -22,6 +23,11 @@ def reset_database():
     # Create a replacement before modifying the existing database.
     with TemporaryDirectory(dir=database_path.parent) as temp_dir:
         replacement_path = Path(temp_dir) / "taskflow.db"
+
+        # Restrict replacement database permissions on POSIX systems.
+        if os.name == "posix":
+            replacement_path.touch(mode=0o600)
+            replacement_path.chmod(0o600)
 
         with closing(sqlite3.connect(replacement_path)) as connection:
             with connection:

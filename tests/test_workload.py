@@ -92,6 +92,72 @@ class TestAvailableHours(unittest.TestCase):
     def test_cross_year_boundary(self):
         self.assertEqual(calculate_available_hours(40, date(2026, 12, 31), date(2027, 1, 4)), 24)
 
+    def test_matches_original_daily_calculation(self):
+        for weekday in range(7):
+            start = TODAY + timedelta(days=weekday)
+
+            for duration in range(1, 367):
+                end = start + timedelta(days=duration - 1)
+
+                working_days = sum(
+                    1
+                    for offset in range(duration)
+                    if (start + timedelta(days=offset)).weekday() < 5
+                )
+
+                for weekly_hours in (0, 0.5, 37.5, 40, 168):
+                    with self.subTest(
+                        weekday=weekday,
+                        duration=duration,
+                        weekly_hours=weekly_hours,
+                    ):
+                        expected = working_days * (weekly_hours / 5)
+
+                        self.assertEqual(
+                            calculate_available_hours(
+                                weekly_hours, start, end
+                            ),
+                            expected,
+                        )
+
+    def test_cross_leap_day(self):
+        self.assertEqual(
+            calculate_available_hours(
+                40,
+                date(2028, 2, 28),
+                date(2028, 3, 3),
+            ),
+            40,
+        )
+
+    def test_extremely_long_date_range(self):
+        start = date(2000, 1, 1)
+        end = date(2399, 12, 31)
+
+        self.assertEqual(
+            calculate_available_hours(40, start, end),
+            834840,
+        )
+
+    def test_maximum_supported_deadline(self):
+        self.assertEqual(
+            calculate_available_hours(
+                40,
+                date(9999, 12, 27),
+                date.max,
+            ),
+            40,
+        )
+
+        self.assertEqual(
+            calculate_available_hours(
+                40,
+                date.max,
+                date.max,
+            ),
+            8,
+        )
+
 
 class TestDeadlineGroups(unittest.TestCase):
     def test_empty_tasks(self):
