@@ -48,6 +48,9 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Check out repository
@@ -65,8 +68,20 @@ jobs:
           python -m pip install pip-audit bandit
 
       - name: Audit dependencies
-        run: python -m pip_audit -r requirements.txt
+        run: |
+          python -m pip_audit -r requirements.txt 2>&1 | tee pip-audit-report.txt
 
       - name: Scan application source code
         if: success() || failure()
-        run: python -m bandit -r backend frontend
+        run: |
+          python -m bandit -r backend frontend 2>&1 | tee bandit-report.txt
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: security-reports
+          path: |
+            pip-audit-report.txt
+            bandit-report.txt
+            
