@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import httpx
 from contextlib import closing
 from datetime import date
 from pathlib import Path
@@ -367,6 +368,22 @@ class TestGenerateRecommendationsAPI(unittest.TestCase):
         self.assertEqual(
             response.json()["detail"],
             "Gemini API request failed."
+        )
+
+    def test_gemini_timeout_returns_504(self):
+        self.create_employee()
+        self.create_task()
+
+        with patch(
+            "backend.main.ai_integration.generate_task_recommendations",
+            side_effect=httpx.TimeoutException("Simulated timeout")
+        ):
+            response = self.client.post("/recommendations")
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(
+            response.json()["detail"],
+            "Gemini request timed out. Please try again."
         )
 
     def test_unknown_task_recommendation_rejected(self):

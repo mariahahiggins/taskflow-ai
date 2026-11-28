@@ -2,6 +2,7 @@
 
 import sqlite3
 import json
+import httpx
 from datetime import date
 from pathlib import Path as FilePath
 from typing import Annotated
@@ -260,6 +261,14 @@ def generate_recommendations():
             detail="Gemini returned an invalid response."
         ) from exc
     
+    except httpx.TimeoutException as exc:
+        print("AI: Gemini request timed out after 30 seconds.", flush=True)
+
+        raise HTTPException(
+            status_code=504,
+            detail="Gemini request timed out. Please try again."
+        ) from exc
+
     except genai_errors.APIError as exc:
         print("AI: Gemini API request failed.", flush=True)
 
