@@ -13,6 +13,7 @@ from fastapi.exceptions import ResponseValidationError
 
 from backend import database, workload
 from backend.main import app
+from backend.models import MAX_SQLITE_ID
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EMPLOYEE = {"name": "Alex Johnson", "available_hours": 40, "experience_level": "Mid"}
@@ -148,25 +149,238 @@ class EmployeeTaskAPITests(unittest.TestCase):
 
     def test_reject_bad_employee_input_without_writing(self):
         cases = [
-            {"name": "   "}, {"available_hours": -1}, {"available_hours": True},
-            {"experience_level": "Expert"}, {"employee_id": 99},
+            {"name": ""},
+            {"name": "   "},
+            {"name": "A" * 101},
+            {"name": "Alex\x00Johnson"},
+            {"name": "Alex\nJohnson"},
+            {"name": "Alex\tJohnson"},
+            {"name": "Alex\x7fJohnson"},
+            {"name": "Alex\x85Johnson"},
+            {"name": 123},
+            {"name": None},
+            {"available_hours": -1},
+            {"available_hours": True},
+            {"available_hours": "40"},
+            {"available_hours": None},
+            {"available_hours": 168.01},
+            {"available_hours": 169},
+            {"available_hours": 1e100},
+            {"experience_level": "Expert"},
+            {"employee_id": 99},
         ]
+
         for changes in cases:
             with self.subTest(changes=changes):
-                self.assertEqual(
-                    self.client.post("/employees", json={**EMPLOYEE, **changes}).status_code,
-                    422,
+                response = self.client.post(
+                    "/employees", json={**EMPLOYEE, **changes}
                 )
-        self.assertEqual(self.client.get("/employees").json(), [])
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.client.get("/employees").json(), [])
+
+    def test_reject_nonfinite_employee_availability(self):
+        for value in ("NaN", "Infinity", "-Infinity", "1e309", "-1e309"):
+            with self.subTest(value=value):
+                body = (
+                    '{"name": "Alex Johnson", '
+                    f'"available_hours": {value}, '
+                    '"experience_level": "Mid"}'
+                )
+
+                response = self.client.post(
+                    "/employees",
+                    content=body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(self.client.get("/employees").json(), [])
+
+    def test_employee_name_accepts_maximum_length(self):
+        name = "A" * 100
+        employee = self.create_employee(name=name)
+
+        self.assertEqual(employee["name"], name)
+
+        response = self.client.get(
+            f'/employees/{employee["employee_id"]}'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), employee)
+
+    def test_employee_names_accept_unicode_and_punctuation(self):
+        names = [
+            "José García",
+            "Anne-Marie O'Connor",
+            "李明",
+            "محمد علي",
+            "Zoë Müller",
+        ]
+
+        for name in names:
+            with self.subTest(name=name):
+                employee = self.create_employee(name=name)
+                self.assertEqual(employee["name"], name)
+
+                response = self.client.get(
+                    f'/employees/{employee["employee_id"]}'
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["name"], name)
+
+    def test_employee_availability_accepts_valid_boundaries(self):
+        for hours in (0, 0.5, 35.5, 168):
+            with self.subTest(hours=hours):
+                employee = self.create_employee(available_hours=hours)
+
+                self.assertEqual(employee["available_hours"], hours)
+
+                response = self.client.get(
+                    f'/employees/{employee["employee_id"]}'
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["available_hours"], hours
+                )
+
+    def test_reject_invalid_employee_updates_without_writing(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        path = f"/employees/{employee_id}"
+
+        task = self.create_task(employee_id=employee_id)
+        task_path = f'/tasks/{task["task_id"]}'
+
+        cases = [
+            {"name": ""},
+            {"name": "   "},
+            {"name": "A" * 101},
+            {"name": "Alex\x00Johnson"},
+            {"name": "Alex\nJohnson"},
+            {"name": "Alex\tJohnson"},
+            {"name": "Alex\x7fJohnson"},
+            {"name": "Alex\x85Johnson"},
+            {"available_hours": -1},
+            {"available_hours": 168.01},
+            {"available_hours": 169},
+            {"available_hours": True},
+            {"available_hours": "40"},
+            {"experience_level": "Expert"},
+            {"status": "Pending"},
+            {"employee_id": 99},
+            {"name": "A" * 101, "status": "Inactive"},
+        ]
+
+        for changes in cases:
+            with self.subTest(changes=changes):
+                response = self.client.put(
+                    path,
+                    json={**EMPLOYEE, "status": "Active", **changes},
+                )
+
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.client.get(path).json(), employee)
+                self.assertEqual(self.client.get(task_path).json(), task)
+
+    def test_employee_boundary_update_preserves_response_compatibility(self):
+        employee = self.create_employee()
+        employee_id = employee["employee_id"]
+        path = f"/employees/{employee_id}"
+
+        values = {
+            **EMPLOYEE,
+            "name": "A" * 100,
+            "available_hours": 168,
+            "status": "Active",
+        }
+
+        response = self.client.put(path, json=values)
+        self.assertEqual(response.status_code, 200, response.text)
+
+        expected = {**values, "employee_id": employee_id}
+
+        self.assertEqual(response.json(), expected)
+        self.assertEqual(self.client.get(path).json(), expected)
+        self.assertEqual(self.client.get("/employees").json(), [expected])
+
+        individual = self.client.get(f"{path}/workload")
+        self.assertEqual(individual.status_code, 200, individual.text)
+        self.assertEqual(individual.json()["name"], values["name"])
+        self.assertEqual(individual.json()["available_hours"], 168)
+
+        team = self.client.get("/workloads")
+        self.assertEqual(team.status_code, 200, team.text)
+        self.assertEqual(team.json()["total_employees"], 1)
+        self.assertEqual(team.json()["employees"][0], individual.json())
 
     def test_missing_records_are_404_and_bad_path_ids_are_422(self):
         for collection in ("employees", "tasks"):
-            self.assertEqual(self.client.get(f"/{collection}/999").status_code, 404)
-            for identifier in ("0", "-1", "abc"):
+            for identifier in (999, MAX_SQLITE_ID):
                 with self.subTest(collection=collection, identifier=identifier):
-                    self.assertEqual(
-                        self.client.get(f"/{collection}/{identifier}").status_code, 422
-                    )
+                    response = self.client.get(f"/{collection}/{identifier}")
+                    self.assertEqual(response.status_code, 404)
+
+            for identifier in ("0", "-1", "abc", "1.5", str(MAX_SQLITE_ID + 1)):
+                with self.subTest(collection=collection, identifier=identifier):
+                    response = self.client.get(f"/{collection}/{identifier}")
+                    self.assertEqual(response.status_code, 422)
+
+    def test_oversized_update_ids_are_rejected(self):
+        oversized_id = MAX_SQLITE_ID + 1
+
+        employee = self.create_employee()
+        task = self.create_task(employee_id=employee["employee_id"])
+
+        response = self.client.put(
+            f"/employees/{oversized_id}",
+            json={**EMPLOYEE, "status": "Active"},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+
+        response = self.client.put(
+            f"/tasks/{oversized_id}",
+            json={**TASK, "status": "Active", "employee_id": None},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+
+        self.assertEqual(self.client.get("/employees").json(), [employee])
+        self.assertEqual(self.client.get("/tasks").json(), [task])
+
+    def test_workload_id_upper_boundary(self):
+        response = self.client.get(
+            f"/employees/{MAX_SQLITE_ID}/workload"
+        )
+        self.assertEqual(response.status_code, 404)
+
+        response = self.client.get(
+            f"/employees/{MAX_SQLITE_ID + 1}/workload"
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_oversized_task_assignment_ids_are_rejected(self):
+        oversized_id = MAX_SQLITE_ID + 1
+
+        response = self.client.post(
+            "/tasks",
+            json={**TASK, "employee_id": oversized_id},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.client.get("/tasks").json(), [])
+
+        employee = self.create_employee()
+        task = self.create_task(employee_id=employee["employee_id"])
+        path = f'/tasks/{task["task_id"]}'
+
+        response = self.client.put(
+            path,
+            json={
+                **TASK,
+                "status": "Active",
+                "employee_id": oversized_id,
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.client.get(path).json(), task)
 
     def test_task_defaults_and_date_serialization(self):
         task = self.create_task()
@@ -207,6 +421,273 @@ class EmployeeTaskAPITests(unittest.TestCase):
                     self.client.post("/tasks", json={**TASK, **changes}).status_code, 422
                 )
         self.assertEqual(self.client.get("/tasks").json(), [])
+
+    def test_reject_task_security_input_without_writing(self):
+        invalid_values = [
+            {"title": "A" * 201},
+            {"title": "Task\x00title"},
+            {"title": "Task\ntitle"},
+            {"title": "Task\ttitle"},
+            {"title": "Task\x7ftitle"},
+            {"title": "Task\x85title"},
+            {"title": 123},
+            {"title": None},
+            {"estimated_hours": 8760.01},
+            {"estimated_hours": 8761},
+            {"estimated_hours": 1e100},
+            {"estimated_hours": "10"},
+            {"estimated_hours": None},
+        ]
+
+        for changes in invalid_values:
+            with self.subTest(changes=changes):
+                response = self.client.post(
+                    "/tasks",
+                    json={**TASK, **changes},
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.client.get("/tasks").json(), [])
+
+    def test_task_accepts_valid_boundaries(self):
+        for title, hours in (
+            ("A", 0.5),
+            ("A" * 200, 8760),
+        ):
+            with self.subTest(title=title, hours=hours):
+                task = self.create_task(
+                    title=title,
+                    estimated_hours=hours,
+                )
+
+                response = self.client.get(
+                    f'/tasks/{task["task_id"]}'
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["title"], title)
+                self.assertEqual(
+                    response.json()["estimated_hours"], hours
+                )
+
+    def test_task_titles_accept_unicode_and_punctuation(self):
+        titles = (
+            "Review client's report",
+            "Prepare résumé – final version",
+            "更新项目文档",
+            "Review report (Phase 2)",
+        )
+
+        for title in titles:
+            with self.subTest(title=title):
+                task = self.create_task(title=title)
+
+                response = self.client.get(
+                    f'/tasks/{task["task_id"]}'
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["title"], title)
+
+    def test_reject_invalid_task_updates_without_writing(self):
+        employee = self.create_employee()
+        task = self.create_task(employee_id=employee["employee_id"])
+        path = f'/tasks/{task["task_id"]}'
+
+        invalid_values = [
+            {"title": "A" * 201},
+            {"title": "Task\x00title"},
+            {"title": "Task\ntitle"},
+            {"title": "Task\ttitle"},
+            {"estimated_hours": 8761},
+            {"estimated_hours": 0},
+            {"estimated_hours": -1},
+            {"estimated_hours": True},
+            {"estimated_hours": "10"},
+            {"estimated_hours": None},
+            {"title": "", "status": "Completed"},
+            {"estimated_hours": 8761, "employee_id": None},
+        ]
+
+        for changes in invalid_values:
+            with self.subTest(changes=changes):
+                response = self.client.put(
+                    path,
+                    json={
+                        **TASK,
+                        "status": "Active",
+                        "employee_id": employee["employee_id"],
+                        **changes,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.client.get(path).json(), task)
+
+    def test_reject_nonfinite_task_hours(self):
+        for value in ("NaN", "Infinity", "-Infinity", "1e309", "-1e309"):
+            with self.subTest(value=value):
+                body = (
+                    '{"title": "Prepare report", '
+                    f'"estimated_hours": {value}, '
+                    '"deadline": "2026-11-05", '
+                    '"priority": "High", '
+                    '"difficulty": "Medium"}'
+                )
+
+                response = self.client.post(
+                    "/tasks",
+                    content=body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(self.client.get("/tasks").json(), [])
+
+    def test_reject_invalid_deadlines_without_writing(self):
+        invalid_deadlines = [
+            "",
+            " ",
+            "2026-02-30",
+            "2026-02-29",
+            "2026-13-01",
+            "2026-00-01",
+            "2026-11-00",
+            "2026-1-5",
+            "11/05/2026",
+            "20261105",
+            "2026-11-05T00:00:00",
+            "2026-11-05T00:00:00Z",
+            " 2026-11-05 ",
+            "2026-11-05\n",
+            "1793836800",
+            1793836800,
+            1793836800.0,
+            True,
+            None,
+            [],
+            {},
+        ]
+
+        for deadline in invalid_deadlines:
+            with self.subTest(deadline=deadline):
+                response = self.client.post(
+                    "/tasks",
+                    json={**TASK, "deadline": deadline},
+                )
+
+                self.assertEqual(
+                    response.status_code, 422, response.text
+                )
+                self.assertEqual(
+                    self.client.get("/tasks").json(), []
+                )
+
+    def test_task_accepts_valid_deadlines(self):
+        valid_deadlines = [
+            "0001-01-01",
+            "2020-01-01",
+            "2026-11-06",
+            "2026-12-31",
+            "2027-01-01",
+            "2028-02-29",
+            "9999-12-31",
+        ]
+
+        for deadline in valid_deadlines:
+            with self.subTest(deadline=deadline):
+                task = self.create_task(deadline=deadline)
+
+                self.assertEqual(task["deadline"], deadline)
+
+                response = self.client.get(
+                    f'/tasks/{task["task_id"]}'
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["deadline"], deadline
+                )
+
+    def test_reject_invalid_deadline_updates(self):
+        employee = self.create_employee()
+
+        task = self.create_task(
+            employee_id=employee["employee_id"]
+        )
+
+        invalid_deadlines = [
+            "",
+            "2026-02-30",
+            "2026-1-5",
+            "11/05/2026",
+            "2026-11-05T00:00:00",
+            " 2026-11-05 ",
+            1793836800,
+            True,
+            None,
+        ]
+
+        for deadline in invalid_deadlines:
+            with self.subTest(deadline=deadline):
+                response = self.client.put(
+                    f'/tasks/{task["task_id"]}',
+                    json={
+                        **TASK,
+                        "title": "Modified task",
+                        "deadline": deadline,
+                        "status": "Completed",
+                        "employee_id": None,
+                    },
+                )
+
+                self.assertEqual(
+                    response.status_code, 422, response.text
+                )
+
+                stored = self.client.get(
+                    f'/tasks/{task["task_id"]}'
+                )
+
+                self.assertEqual(stored.status_code, 200)
+                self.assertEqual(stored.json(), task)
+
+    def test_accept_valid_deadline_updates(self):
+        employee = self.create_employee()
+
+        task = self.create_task(
+            employee_id=employee["employee_id"]
+        )
+
+        for deadline in (
+            "2020-01-01",
+            "2028-02-29",
+            "9999-12-31",
+        ):
+            with self.subTest(deadline=deadline):
+                response = self.client.put(
+                    f'/tasks/{task["task_id"]}',
+                    json={
+                        **TASK,
+                        "deadline": deadline,
+                        "status": "Active",
+                        "employee_id": employee["employee_id"],
+                    },
+                )
+
+                self.assertEqual(
+                    response.status_code, 200, response.text
+                )
+
+                expected = {**task, "deadline": deadline}
+
+                self.assertEqual(response.json(), expected)
+
+                stored = self.client.get(
+                    f'/tasks/{task["task_id"]}'
+                )
+
+                self.assertEqual(stored.status_code, 200)
+                self.assertEqual(stored.json(), expected)
 
     def test_task_update_can_complete_reassign_and_unassign(self):
         first = self.create_employee()
@@ -318,6 +799,43 @@ class EmployeeTaskAPITests(unittest.TestCase):
         self.assertEqual(summary["this_week_hours"], 5)
         self.assertEqual(summary["next_week_hours"], 0)
         self.assertEqual(summary["later_hours"], 0)
+
+    def test_extreme_task_deadline_does_not_break_workloads(self):
+        employee = self.create_employee()
+
+        task = self.create_task(
+            deadline="9999-12-31",
+            estimated_hours=10,
+            employee_id=employee["employee_id"],
+        )
+
+        response = self.client.get(
+            f'/employees/{employee["employee_id"]}/workload'
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        summary = response.json()
+
+        self.assertEqual(summary["outstanding_hours"], 10)
+        self.assertEqual(summary["active_task_count"], 1)
+        self.assertEqual(summary["after_2_weeks_count"], 1)
+        self.assertEqual(summary["later_hours"], 10)
+        self.assertEqual(summary["deadline_conflicts"], [])
+        self.assertEqual(summary["one_week_utilization"], 0)
+        self.assertEqual(summary["two_week_utilization"], 0)
+
+        response = self.client.get("/workloads")
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        team = response.json()
+
+        self.assertEqual(team["outstanding_hours"], 10)
+        self.assertEqual(team["active_tasks"], 1)
+        self.assertEqual(team["total_deadline_conflicts"], 0)
+        self.assertEqual(team["employees"], [summary])
+        self.assertEqual(team["upcoming_deadlines"], [task])
 
     def test_workload_requires_a_valid_existing_employee(self):
         missing = self.client.get("/employees/999/workload")

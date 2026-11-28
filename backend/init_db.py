@@ -1,18 +1,33 @@
+"""Initialize the TaskFlow AI database."""
+
 import sqlite3
 from pathlib import Path
+from contextlib import closing
+import os
 
-# Locate the backend folder
 backend_dir = Path(__file__).resolve().parent
 
-# Define the database and schema file paths
 database_path = backend_dir / "taskflow.db"
 schema_path = backend_dir / "schema.sql"
 
-# Create the database and execute the schema
-with sqlite3.connect(database_path) as connection:
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.executescript(
-        schema_path.read_text(encoding="utf-8")
-    )
 
-print("TaskFlow AI database initialized successfully!")
+def initialize_database():
+    """Create the database tables without removing existing data."""
+
+    # Restrict database permissions on POSIX systems.
+    if os.name == "posix":
+        database_path.touch(mode=0o600, exist_ok=True)
+        database_path.chmod(0o600)
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        with connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executescript(
+                schema_path.read_text(encoding="utf-8")
+            )
+
+    print("TaskFlow AI database initialized successfully!")
+
+
+if __name__ == "__main__":
+    initialize_database()

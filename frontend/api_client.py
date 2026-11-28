@@ -20,6 +20,52 @@ def api_request(method, endpoint, data=None):
     response.raise_for_status()
     return response.json()
 
+def get_error_message(error):
+    """Return a safe, user-friendly message for an API error."""
+
+    if isinstance(error, requests.exceptions.Timeout):
+        return "The request timed out. Please try again."
+
+    if isinstance(error, requests.exceptions.ConnectionError):
+        return "Could not connect to the backend. Ensure the application is running."
+
+    if isinstance(error, requests.exceptions.HTTPError):
+        response = error.response
+
+        if response is not None:
+            status = response.status_code
+
+            if status == 400:
+                return "The request could not be completed. Check the submitted information."
+
+            if status == 404:
+                return "The requested record could not be found."
+
+            if status == 409:
+                return "The data has changed. Refresh and try again."
+
+            if status == 422:
+                return "Invalid input. Check the submitted values and try again."
+
+            if status == 502:
+                return "The AI service could not provide a valid response. Please try again."
+
+            if status == 503:
+                try:
+                    detail = response.json().get("detail")
+                except (ValueError, AttributeError):
+                    detail = None
+
+                if detail == "Gemini API key is not configured.":
+                    return "The Gemini API key is not configured."
+
+                return "A required service is currently unavailable."
+
+            if status >= 500:
+                return "An internal service error occurred. Please try again."
+
+    return "An unexpected error occurred. Please try again."
+
 # Employee endpoints
 def get_employees():
     return api_request("GET", "/employees")

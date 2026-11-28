@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from backend.fairness import calculate_team_fairness
 
+
 def get_capacity_deadline(task, today):
     """Use the current workweek for overdue task capacity checks."""
     deadline = date.fromisoformat(task["deadline"])
@@ -11,6 +12,7 @@ def get_capacity_deadline(task, today):
 
     days_until_friday = (4 - today.weekday()) % 7
     return today + timedelta(days=days_until_friday)
+
 
 def calculate_outstanding_hours(tasks):
     """Return total estimated hours for active tasks."""
@@ -35,15 +37,14 @@ def calculate_available_hours(weekly_hours, start_date, end_date):
         return 0.0
 
     daily_hours = weekly_hours / 5
-    working_days = 0
+    total_days = (end_date - start_date).days + 1
 
-    current_date = start_date
+    full_weeks, remaining_days = divmod(total_days, 7)
+    working_days = full_weeks * 5
 
-    while current_date <= end_date:
-        if current_date.weekday() < 5:
+    for offset in range(remaining_days):
+        if (start_date.weekday() + offset) % 7 < 5:
             working_days += 1
-
-        current_date += timedelta(days=1)
 
     return working_days * daily_hours
 

@@ -2,18 +2,21 @@
 
 import sqlite3
 import json
+import httpx
 from datetime import date
 from pathlib import Path as FilePath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from pydantic import ValidationError
 from google.genai import errors as genai_errors
 
 from backend import database, workload, assignment, ai_integration
 from backend.models import (
+    MAX_SQLITE_ID,
     EmployeeCreate,
     EmployeeResponse,
     EmployeeUpdate,
@@ -22,13 +25,13 @@ from backend.models import (
     TaskResponse,
     TaskUpdate,
     TeamWorkloadResponse,
-    AssignmentRecommendation,
     RecommendationBatchResponse,
     IndividualPreviewRequest,
     IndividualPreviewResponse,
     SelectedChangesRequest,
     SelectedChangesResponse,
-    ApprovalResponse
+    ApprovalResponse,
+    GeneratedRecommendations
 )
 
 app = FastAPI(
@@ -49,6 +52,23 @@ def require_initialized_database() -> None:
 
 
 data_routes = APIRouter(dependencies=[Depends(require_initialized_database)])
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError):
+    """Return validation errors without exposing raw input values."""
+    errors = [
+        {
+            "type": error["type"],
+            "loc": list(error["loc"]),
+            "msg": error["msg"],
+        }
+        for error in exc.errors()
+    ]
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors},
+    )
 
 
 @app.exception_handler(sqlite3.IntegrityError)
@@ -84,7 +104,7 @@ def list_employees():
 
 
 @data_routes.get("/employees/{id}", response_model=EmployeeResponse, tags=["Employees"])
-def get_employee(id: Annotated[int, Path(gt=0)]):
+def get_employee(id: Annotated[int, Path(gt=0, le=MAX_SQLITE_ID)]):
     employee = database.get_employee(id)
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found.")
@@ -104,7 +124,7 @@ def create_employee(employee: EmployeeCreate):
 
 
 @data_routes.put("/employees/{id}", response_model=EmployeeResponse, tags=["Employees"])
-def update_employee(id: Annotated[int, Path(gt=0)], employee: EmployeeUpdate):
+def update_employee(id: Annotated[int, Path(gt=0, le=MAX_SQLITE_ID)], employee: EmployeeUpdate):
     """Replace all editable employee fields."""
     values = employee.model_dump()
     if not database.update_employee(id, **values):
@@ -118,7 +138,7 @@ def list_tasks():
 
 
 @data_routes.get("/tasks/{id}", response_model=TaskResponse, tags=["Tasks"])
-def get_task(id: Annotated[int, Path(gt=0)]):
+def get_task(id: Annotated[int, Path(gt=0, le=MAX_SQLITE_ID)]):
     task = database.get_task(id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found.")
@@ -144,7 +164,7 @@ def create_task(task: TaskCreate):
 
 
 @data_routes.put("/tasks/{id}", response_model=TaskResponse, tags=["Tasks"])
-def update_task(id: Annotated[int, Path(gt=0)], task: TaskUpdate):
+def update_task(id: Annotated[int, Path(gt=0, le=MAX_SQLITE_ID)], task: TaskUpdate):
     """Replace all editable task fields, including status and assignment."""
     values = task.model_dump(mode="json")
     try:
@@ -164,7 +184,7 @@ def update_task(id: Annotated[int, Path(gt=0)], task: TaskUpdate):
     response_model=EmployeeWorkloadResponse,
     tags=["Workloads"],
 )
-def get_employee_workload(id: Annotated[int, Path(gt=0)]):
+def get_employee_workload(id: Annotated[int, Path(gt=0, le=MAX_SQLITE_ID)]):
     """Report active work, utilization, and deadline conflicts for one employee."""
     employee = get_employee(id)
     tasks = database.get_tasks_by_employee(id)
@@ -223,6 +243,12 @@ def generate_recommendations():
             detail="Gemini returned invalid JSON."
         ) from exc
 
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid recommendation format."
+        ) from exc
+    
     except ValueError as exc:
         if "GEMINI_API_KEY is missing" in str(exc):
             raise HTTPException(
@@ -235,8 +261,16 @@ def generate_recommendations():
             detail="Gemini returned an invalid response."
         ) from exc
     
+    except httpx.TimeoutException as exc:
+        print("AI: Gemini request timed out after 30 seconds.", flush=True)
+
+        raise HTTPException(
+            status_code=504,
+            detail="Gemini request timed out. Please try again."
+        ) from exc
+
     except genai_errors.APIError as exc:
-        print(f"GEMINI API ERROR: {type(exc).__name__}: {exc}", flush=True)
+        print("AI: Gemini API request failed.", flush=True)
 
         raise HTTPException(
             status_code=502,
@@ -244,9 +278,11 @@ def generate_recommendations():
         ) from exc
 
     try:
+        validated_result = GeneratedRecommendations.model_validate(result)
+
         recommendations = [
-            AssignmentRecommendation.model_validate(item).model_dump()
-            for item in result["recommendations"]
+            item.model_dump()
+            for item in validated_result.recommendations
         ]
 
     except (ValidationError, KeyError, TypeError, ValueError) as exc:

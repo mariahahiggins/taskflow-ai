@@ -225,3 +225,14 @@ __marimo__/
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# TaskFlow AI - Generated CI/CD reports
+pip-audit-report.txt
+bandit-report.txt
+deployment.log
+/health.json
+/employees.json
+/tasks.json
+/workloads.json
